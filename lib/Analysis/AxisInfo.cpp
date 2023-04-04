@@ -221,14 +221,14 @@ private:
     // lhs + rhs = k * d_lhs + p * d_rhs = (k * d_lhs + p * d_rhs) *
     // gcd(d_lhs, d_rhs)
     auto elemSize = 1;
-    if constexpr (std::is_same_v<OpTy, triton::AddPtrOp>) {
-      //  %ptr = addptr %lhs, %rhs
-      // is equivalent to
-      //  %0 = mul %lhs, %elemSize
-      //  %ptr = add %0, %rhs
-      elemSize = std::max<unsigned int>(
-          1, triton::getPointeeBitWidth(op.getPtr().getType()) / 8);
-    }
+    //if constexpr (std::is_same_v<OpTy, triton::AddPtrOp>) {
+    //  //  %ptr = addptr %lhs, %rhs
+    //  // is equivalent to
+    //  //  %0 = mul %lhs, %elemSize
+    //  //  %ptr = add %0, %rhs
+    //  elemSize = std::max<unsigned int>(
+    //      1, triton::getPointeeBitWidth(op.getPtr().getType()) / 8);
+    //}
     return gcd(lhs.getDivisibility(dim), rhs.getDivisibility(dim) * elemSize);
   }
 
