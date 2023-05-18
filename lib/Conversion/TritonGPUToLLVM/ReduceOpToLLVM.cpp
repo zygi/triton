@@ -372,8 +372,11 @@ private:
     auto order = getOrder(srcLayout);
     SmallVector<Value> multiDimLaneId =
         delinearize(rewriter, loc, laneId, threadsPerWarp, order);
+    auto warp_order = order;
+    if (srcLayout.dyn_cast<MmaEncodingAttr>())
+      warp_order = {0, 1};
     SmallVector<Value> multiDimWarpId =
-        delinearize(rewriter, loc, warpId, warpsPerCTA, order);
+        delinearize(rewriter, loc, warpId, warpsPerCTA, warp_order);
 
     Value laneIdAxis = multiDimLaneId[axis];
     Value warpIdAxis = multiDimWarpId[axis];

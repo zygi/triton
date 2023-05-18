@@ -1430,7 +1430,8 @@ def test_reduce2d(op, dtype_str, shape, axis, device='cuda'):
 layouts = [
     BlockedLayout([1, 4], [8, 4], [4, 1], [1, 0]),
     BlockedLayout([1, 4], [8, 4], [4, 1], [0, 1]),
-    MmaLayout(version=(2, 0), warps_per_cta=[4, 1])
+    MmaLayout(version=(2, 0), warps_per_cta=[4, 1]),
+    MmaLayout(version=(2, 0), warps_per_cta=[2, 2])
 ]
 
 
@@ -1493,7 +1494,7 @@ def test_reduce_layouts(M, N, src_layout, axis, device='cuda'):
     x_tri = torch.tensor(x, device=device)
     z_tri = torch.tensor(z, device=device)
 
-    pgm = kernel[(1, 1, 4)](x_tri, x_tri.stride(0), z_tri)
+    pgm = kernel[(1, 1, 1)](x_tri, x_tri.stride(0), z_tri)
 
     z_ref = np.max(x, axis=axis, keepdims=True)
 
