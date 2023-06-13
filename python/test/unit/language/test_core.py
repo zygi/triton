@@ -2018,6 +2018,87 @@ def test_dot(M, N, K, num_warps, col_a, col_b, epilogue, allow_tf32, in_dtype, o
         assert 'mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16' in ptx
 
 
+def test_matmul():
+    in_dtype = 'float32'
+    M, K, N = 32, 32, 32
+    device = 'cuda'
+
+    @triton.jit
+    def _kernel(A, B, C, Bias, M, N, K,
+                stride_am, stride_ak,
+                stride_bk, stride_bn,
+                stride_cm, stride_cn,
+                dot_out_dtype: tl.constexpr,
+                BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
+                GROUP_M: tl.constexpr,
+                ):
+        # matrix multiplication
+        pid = tl.program_id(0)
+        pid_z = tl.program_id(1)
+        grid_m = tl.cdiv(M, BLOCK_M)
+        grid_n = tl.cdiv(N, BLOCK_N)
+        # re-order program ID for better L2 performance
+        width = GROUP_M * grid_n
+        group_id = pid // width
+        group_size = min(grid_m - group_id * GROUP_M, GROUP_M)
+        pid_m = group_id * GROUP_M + (pid % group_size)
+        pid_n = (pid % width) // (group_size)
+        # do matrix multiplication
+        rm = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        rn = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+        ram = tl.max_contiguous(tl.multiple_of(rm % M, BLOCK_M), BLOCK_M)
+        rbn = tl.max_contiguous(tl.multiple_of(rn % N, BLOCK_N), BLOCK_N)
+        rk = pid_z * BLOCK_K + tl.arange(0, BLOCK_K)
+        # pointers
+        A = A + (ram[:, None] * stride_am + rk[None, :] * stride_ak)
+        B = B + (rk[:, None] * stride_bk + rbn[None, :] * stride_bn)
+        acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=dot_out_dtype)
+        for k in range(0, tl.cdiv(K, BLOCK_K)):
+            a = tl.load(A)
+            b = tl.load(B)
+            acc += tl.dot(a, b, out_dtype=dot_out_dtype)
+            A += BLOCK_K * stride_ak
+            B += BLOCK_K * stride_bk
+
+        rm = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        rn = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+        bias = tl.load(Bias + rn, mask=rn < N, other=0)
+        acc = acc + bias[None, :]
+
+        acc = acc.to(C.dtype.element_ty)
+        C = C + (rm[:, None] * stride_cm + rn[None, :] * stride_cn)
+        mask = (rm < M)[:, None] & (rn < N)[None, :]
+        tl.store(C, acc, mask=mask)
+        # input
+    rs = RandomState(17)
+    x = numpy_random((M, K), dtype_str=in_dtype, rs=rs) * .1
+    y = numpy_random((K, N), dtype_str=in_dtype, rs=rs) * .1
+    bias = numpy_random((N), dtype_str=in_dtype, rs=rs) * .1
+    x = (x.view('uint32') & np.uint32(0xffffe000)).view('float32')
+    y = (y.view('uint32') & np.uint32(0xffffe000)).view('float32')
+
+    x_tri = to_triton(x, device=device)
+    y_tri = to_triton(y, device=device)
+    bias_tri = to_triton(bias, device=device)
+    # triton result
+    z = 1 + numpy_random((M, N), dtype_str=in_dtype, rs=rs) * .1
+    z_tri = to_triton(z, device=device)
+
+    out_dtype = tl.float32
+
+    pgm = _kernel[(1, 1)](x_tri, y_tri, z_tri, bias_tri,
+                          M, N, K,
+                          x_tri.stride(0), x_tri.stride(1),
+                          y_tri.stride(0), y_tri.stride(1),
+                          z_tri.stride(0), z_tri.stride(1),
+                          dot_out_dtype=out_dtype,
+                          BLOCK_M=M, BLOCK_K=K, BLOCK_N=N,
+                          GROUP_M=8, num_warps=4)
+
+    z_ref = np.matmul(x, y) + bias[None, :]
+    np.testing.assert_allclose(z_ref, to_numpy(z_tri), rtol=0.01, atol=1e-3)
+
+
 @pytest.mark.parametrize("dtype_str", int_dtypes + float_dtypes + ['bfloat16'])
 def test_full(dtype_str):
     dtype = getattr(torch, dtype_str)
