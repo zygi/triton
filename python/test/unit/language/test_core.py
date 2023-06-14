@@ -2020,7 +2020,7 @@ def test_dot(M, N, K, num_warps, col_a, col_b, epilogue, allow_tf32, in_dtype, o
 
 def test_matmul():
     in_dtype = 'float32'
-    M, K, N = 32, 32, 32
+    M, K, N = 16, 16, 16
     device = 'cuda'
 
     @triton.jit
