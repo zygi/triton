@@ -67,6 +67,7 @@ def _kernel(A, B, C, M, N, K,
             dot_out_dtype: tl.constexpr,
             BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
             GROUP_M: tl.constexpr, SPLIT_K: tl.constexpr, EVEN_K: tl.constexpr,
+            IS_A_FLOAT8: tl.constexpr, IS_B_FLOAT8: tl.constexpr,
             ):
     # matrix multiplication
     pid = tl.program_id(0)
@@ -97,6 +98,10 @@ def _kernel(A, B, C, M, N, K,
             k_remaining = K - k * (BLOCK_K * SPLIT_K)
             a = tl.load(A, mask=rk[None, :] < k_remaining, other=0.)
             b = tl.load(B, mask=rk[:, None] < k_remaining, other=0.)
+        if IS_A_FLOAT8:
+            a = a.to(tl.float8e5, bitcast=True).to(tl.float16)
+        if IS_B_FLOAT8:
+            b = b.to(tl.float8e5, bitcast=True).to(tl.float16)
         acc += tl.dot(a, b, out_dtype=dot_out_dtype)
         A += BLOCK_K * SPLIT_K * stride_ak
         B += BLOCK_K * SPLIT_K * stride_bk
@@ -131,9 +136,10 @@ class _matmul(torch.autograd.Function):
         M, K = a.shape
         _, N = b.shape
         # allocates output
-        c = torch.empty((M, N), device=device, dtype=a.dtype)
+        c_dtype = a.dtype if a.dtype != torch.int8 else torch.float32
+        c = torch.empty((M, N), device=device, dtype=c_dtype)
         if dot_out_dtype is None:
-            if a.dtype in [torch.float16, torch.float32, torch.bfloat16]:
+            if a.dtype in [torch.int8, torch.float16, torch.float32, torch.bfloat16]:
                 dot_out_dtype = tl.float32
             else:
                 dot_out_dtype = tl.int32
@@ -152,7 +158,9 @@ class _matmul(torch.autograd.Function):
                       b.stride(0), b.stride(1),
                       c.stride(0), c.stride(1),
                       dot_out_dtype=dot_out_dtype,
-                      GROUP_M=8)
+                      GROUP_M=8,
+                      IS_A_FLOAT8=bool(a.dtype == torch.int8),
+                      IS_B_FLOAT8=bool(b.dtype == torch.int8),)
         return c
 
     @staticmethod

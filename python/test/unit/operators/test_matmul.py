@@ -90,7 +90,8 @@ def f8_to_f16(x):
                 (128, 256, 16, 1, 8, 2, None, None, None, AT, BT, ADTYPE, BDTYPE),
                 (32, 64, 16, 1, 1, 2, 64, 128, 32, AT, BT, ADTYPE, BDTYPE),
                 (128, 128, 32, 8, 4, 2, 1024, 1024, 1024, AT, BT, ADTYPE, BDTYPE),
-            ] for ADTYPE, BDTYPE in [("float8", "float16")] for AT in [False, True] for BT in [False, True]
+                (128, 256, 64, 8, 4, 2, 1024, 1024, 1024, AT, BT, ADTYPE, BDTYPE),
+            ] for ADTYPE, BDTYPE in [("float8", "float16"), ("float16", "float8")] for AT in [False, True] for BT in [False, True]
         ]
     ),
 )
@@ -118,17 +119,24 @@ def test_op(BLOCK_M, BLOCK_N, BLOCK_K, SPLIT_K, NWARP, NSTAGE, M, N, K, AT, BT, 
 
     def get_input(n, m, t, dtype):
         if t:
-            return get_input(m, n, False, dtype).t()
+            x = get_input(m, n, False, dtype).t()
+            return x
         if dtype == "float8":
-            x = torch.randint(10, 50, (n, m), device="cuda", dtype=torch.int8)
-            return f8_to_f16(x)
+            return torch.randint(10, 50, (n, m), device="cuda", dtype=torch.int8)
         dtype = {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}[dtype]
         return .1 * torch.randn((n, m), device="cuda", dtype=dtype)
+
+    def get_torch_input(x):
+        if x.dtype == torch.int8:
+            return f8_to_f16(x)
+        else:
+            return x
+
     # allocate/transpose inputs
     a = get_input(M, K, AT, ADTYPE)
     b = get_input(K, N, BT, BDTYPE)
     # run test
-    th_c = torch.matmul(a, b)
+    th_c = torch.matmul(get_torch_input(a), get_torch_input(b))
     try:
         tt_c = triton.ops.matmul(a, b)
         torch.testing.assert_allclose(th_c, tt_c, atol=1e-2, rtol=0)
