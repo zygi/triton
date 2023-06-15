@@ -2215,6 +2215,7 @@ def test_matmul_ttgir():
 def test_matmul_ttgir_opt():
     ir = """
     #blocked = #triton_gpu.blocked<{sizePerThread = [1, 2], threadsPerWarp = [4, 8], warpsPerCTA = [4, 1], order = [1, 0]}>
+    #blocked1 = #triton_gpu.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>
     #mma = #triton_gpu.mma<{versionMajor = 2, versionMinor = 0, warpsPerCTA = [1, 4]}>
     #shared = #triton_gpu.shared<{vec = 4, perPhase = 2, maxPhase = 4, order = [1, 0]}>
     #shared1 = #triton_gpu.shared<{vec = 8, perPhase = 2, maxPhase = 2, order = [1, 0]}>
@@ -2305,6 +2306,14 @@ def test_matmul_ttgir_opt():
         triton_gpu.async_commit_group
         %70 = triton_gpu.insert_slice_async %66, %64, %c1_i32, %68 {axis = 0 : i32, cache = 1 : i32, evict = 1 : i32, isVolatile = false} : tensor<16x16x!tt.ptr<f32>, #blocked> -> tensor<3x16x16xf32, #shared1>
         triton_gpu.async_commit_group
+        %170 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32, #blocked1>
+        %230 = tt.splat %22 : (i32) -> tensor<16xi32, #blocked1>
+        %250 = arith.addi %230, %170 : tensor<16xi32, #blocked1>
+        %152 = tt.splat %59 : (i1) -> tensor<16xi1, #blocked1>
+        %80 = tt.splat %arg3 : (!tt.ptr<f32>) -> tensor<16x!tt.ptr<f32>, #blocked1>
+        %81 = tt.addptr %80, %250 : tensor<16x!tt.ptr<f32>, #blocked1>, tensor<16xi32, #blocked1>
+        %150 = triton_gpu.alloc_tensor : tensor<1x16xf32, #shared>
+        %151 = triton_gpu.insert_slice_async %81, %150, %c0_i32, %152 {axis = 0 : i32, cache = 1 : i32, evict = 1 : i32, isVolatile = false} : tensor<16x!tt.ptr<f32>, #blocked1> -> tensor<1x16xf32, #shared>
         triton_gpu.async_wait {num = 2 : i32}
         %71 = triton_gpu.extract_slice %69[0, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<3x16x16xf32, #shared> to tensor<16x16xf32, #shared>
         %72 = triton_gpu.extract_slice %70[0, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<3x16x16xf32, #shared1> to tensor<16x16xf32, #shared1>
@@ -2344,11 +2353,9 @@ def test_matmul_ttgir_opt():
         scf.yield %107, %108, %109, %117, %118, %119, %120, %114, %115, %110, %121, %122, %124, %126 : tensor<16x16xf32, #mma>, tensor<16x16x!tt.ptr<f32>, #blocked>, tensor<16x16x!tt.ptr<f32>, #blocked>, tensor<3x16x16xf32, #shared>, tensor<3x16x16xf32, #shared1>, tensor<16x16xf32, #shared>, tensor<16x16xf32, #shared1>, tensor<16x16x!tt.ptr<f32>, #blocked>, tensor<16x16x!tt.ptr<f32>, #blocked>, i32, i32, i32, tensor<16x8xf32, #triton_gpu.dot_op<{opIdx = 0, parent = #mma, kWidth = 1}>>, tensor<8x16xf32, #triton_gpu.dot_op<{opIdx = 1, parent = #mma, kWidth = 1}>>
         }
         triton_gpu.async_wait {num = 0 : i32}
-        %78 = "triton_gpu.cmpi"(%26, %30) <{predicate = 2 : i64}> : (tensor<16xi32, #triton_gpu.slice<{dim = 0, parent = #mma}>>, tensor<16xi32, #triton_gpu.slice<{dim = 0, parent = #mma}>>) -> tensor<16xi1, #triton_gpu.slice<{dim = 0, parent = #mma}>>
         %79 = "triton_gpu.cmpi"(%25, %29) <{predicate = 2 : i64}> : (tensor<16xi32, #triton_gpu.slice<{dim = 0, parent = #blocked}>>, tensor<16xi32, #triton_gpu.slice<{dim = 0, parent = #blocked}>>) -> tensor<16xi1, #triton_gpu.slice<{dim = 0, parent = #blocked}>>
-        %80 = tt.splat %arg3 : (!tt.ptr<f32>) -> tensor<16x!tt.ptr<f32>, #triton_gpu.slice<{dim = 0, parent = #mma}>>
-        %81 = tt.addptr %80, %26 : tensor<16x!tt.ptr<f32>, #triton_gpu.slice<{dim = 0, parent = #mma}>>, tensor<16xi32, #triton_gpu.slice<{dim = 0, parent = #mma}>>
-        %82 = tt.load %81, %78, %cst_0 {cache = 1 : i32, evict = 1 : i32, isVolatile = false} : tensor<16xf32, #triton_gpu.slice<{dim = 0, parent = #mma}>>
+        %154 = triton_gpu.extract_slice %151[0, 0] [1, 16] [1, 1] : tensor<1x16xf32, #shared> to tensor<16xf32, #shared>
+        %82 = triton_gpu.convert_layout %154 : (tensor<16xf32, #shared>) -> tensor<16xf32, #triton_gpu.slice<{dim = 0, parent = #mma}>>
         %83 = tt.expand_dims %82 {axis = 0 : i32} : (tensor<16xf32, #triton_gpu.slice<{dim = 0, parent = #mma}>>) -> tensor<1x16xf32, #mma>
         %84 = tt.broadcast %83 : (tensor<1x16xf32, #mma>) -> tensor<16x16xf32, #mma>
         %85 = arith.addf %77#0, %84 : tensor<16x16xf32, #mma>
