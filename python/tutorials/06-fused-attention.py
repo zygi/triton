@@ -266,13 +266,14 @@ class _attention(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, q, k, v, causal, sm_scale):
-        BLOCK = 128
+        BLOCK_N = 64
+        BLOCK_M = 128
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
         assert Lk in {16, 32, 64, 128}
         o = torch.empty_like(q)
-        grid = (triton.cdiv(q.shape[2], 128), q.shape[0] * q.shape[1], 1)
+        grid = (triton.cdiv(q.shape[2], BLOCK_M), q.shape[0] * q.shape[1], 1)
         L = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         m = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
 
@@ -282,19 +283,34 @@ class _attention(torch.autograd.Function):
         else:
             modes = [0]
         for mode in modes:
-            _fwd_kernel[grid](
-                q, k, v, sm_scale,
-                L, m,
-                o,
-                q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-                q.shape[0], q.shape[1], q.shape[2],
-                BLOCK_M=128, BLOCK_N=BLOCK, BLOCK_DMODEL=Lk,
-                MODE=mode,
-                num_warps=num_warps,
-                num_stages=2)
+            if mode == 0 or mode == 2:
+                _fwd_kernel[grid](
+                    q, k, v, sm_scale,
+                    L, m,
+                    o,
+                    q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+                    k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+                    v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+                    o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+                    q.shape[0], q.shape[1], q.shape[2],
+                    BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_DMODEL=Lk,
+                    MODE=mode,
+                    num_warps=num_warps,
+                    num_stages=4)
+            elif mode == 1 or mode == 3:
+                _fwd_kernel[grid](
+                    q, k, v, sm_scale,
+                    L, m,
+                    o,
+                    q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+                    k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+                    v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+                    o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+                    q.shape[0], q.shape[1], q.shape[2],
+                    BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_M, BLOCK_DMODEL=Lk,
+                    MODE=mode,
+                    num_warps=num_warps,
+                    num_stages=2)
 
         ctx.save_for_backward(q, k, v, o, L, m)
         ctx.grid = grid
@@ -344,7 +360,7 @@ class _attention(torch.autograd.Function):
 attention = _attention.apply
 
 
-@pytest.mark.parametrize('Z, H, N_CTX, D_HEAD', [(6, 9, 1024, 64)])
+@pytest.mark.parametrize('Z, H, N_CTX, D_HEAD', [(2, 2, 4096, 64)])
 @pytest.mark.parametrize('causal', [False, True])
 def test_op(Z, H, N_CTX, D_HEAD, causal, dtype=torch.float16):
     torch.manual_seed(20)
