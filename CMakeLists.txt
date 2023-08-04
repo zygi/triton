@@ -22,6 +22,7 @@ endif()
 # Options
 option(TRITON_BUILD_TUTORIALS "Build C++ Triton tutorials" ON)
 option(TRITON_BUILD_PYTHON_MODULE "Build Python Triton bindings" OFF)
+option(TRITON_BUILD_JULIA_MODULE "Build Julia Triton bindings" ON)
 set(TRITON_CODEGEN_BACKENDS "" CACHE STRING "Enable different codegen backends")
 
 # Ensure Python3 vars are set correctly
@@ -216,19 +217,22 @@ if(TRITON_BUILD_PYTHON_MODULE)
     ${dialect_libs}
     ${conversion_libs}
 
-    # optimizations
-    MLIRBytecodeWriter
-    MLIRPass
-    MLIRTransforms
-    MLIRLLVMDialect
-    MLIRSupport
-    MLIRTargetLLVMIRExport
-    MLIRExecutionEngine
-    MLIRMathToLLVM
-    MLIRNVVMToLLVMIRTranslation
-    MLIRROCDLToLLVMIRTranslation
-    MLIRIR
-  )
+  # optimizations
+  MLIRBytecodeWriter
+  MLIRPass
+  MLIRTransforms
+  MLIRLLVMDialect
+  MLIRSupport
+  MLIRTargetLLVMIRExport
+  MLIRExecutionEngine
+  MLIRMathToLLVM
+  MLIRNVVMToLLVMIRTranslation
+  MLIRROCDLToLLVMIRTranslation
+  MLIRIR
+)
+
+if(TRITON_BUILD_PYTHON_MODULE)
+  add_library(triton SHARED ${PYTHON_SRC})
 
   if(WIN32)
     target_link_libraries(triton PRIVATE ${LLVM_LIBRARIES} ${CMAKE_DL_LIBS}
@@ -248,6 +252,48 @@ if(TRITON_BUILD_PYTHON_MODULE)
   endif()
 
   target_link_options(triton PRIVATE ${LLVM_LDFLAGS})
+endif()
+
+
+if(TRITON_BUILD_JULIA_MODULE)
+  #execute julia to get the location
+  execute_process(COMMAND julia -e "using Pkg; Pkg.activate(\".\"); Pkg.add(\"CxxWrap\"); using CxxWrap; print(CxxWrap.prefix_path())" OUTPUT_VARIABLE CxxWrap_prefix_path OUTPUT_STRIP_TRAILING_WHITESPACE)
+  set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ${CxxWrap_prefix_path})
+  find_package(JlCxx)
+  get_target_property(JlCxx_location JlCxx::cxxwrap_julia LOCATION)
+
+  message(STATUS "Adding Julia module")
+  set(JULIA_SRC_PATH ${CMAKE_CURRENT_SOURCE_DIR}/julia/src)
+  set(JULIA_SRC ${JULIA_SRC_PATH}/main.cc)
+  add_library(triton_julia SHARED ${JULIA_SRC})
+  # target_include_directories(triton_julia PRIVATE ${JULIA_SRC_PATH} ${JlCxx_prefix_path}/include )
+  
+  target_link_libraries(triton_julia
+    JlCxx::cxxwrap_julia
+    ${LLVM_LIBRARIES}
+    z
+    ${TRITON_LIBRARIES}
+  )
+  # link_libraries(stdc++fs)
+
+  # add -Wl,--no-undefined only for this target
+  target_link_options(triton_julia PRIVATE ${LLVM_LDFLAGS})
+  set_target_properties(triton_julia PROPERTIES LINK_FLAGS "-Wl,--no-undefined")
+
+  # include debug symbols
+  set_target_properties(triton_julia PROPERTIES
+    COMPILE_FLAGS "-g"
+    LINK_FLAGS "-g"
+  )
+
+  include(FetchContent)
+
+  # # Also requires one of: libbfd (gnu binutils), libdwarf, libdw (elfutils)
+  # FetchContent_Declare(backward
+  #         GIT_REPOSITORY https://github.com/bombela/backward-cpp
+  #         GIT_TAG v1.6)
+  # FetchContent_MakeAvailable(backward)
+  # add_backward(triton_julia)
 endif()
 
 if(UNIX AND NOT APPLE)
