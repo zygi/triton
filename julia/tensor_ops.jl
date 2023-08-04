@@ -40,9 +40,10 @@ Tensor(builder, x::UInt32) = Tensor(builder, CppTriton.get_int32(builder, reinte
 
 Tensor(builder, x::Float32) = Tensor(builder, CppTriton.get_fp32(builder, x), Tfp32)
 Tensor(builder, x::Float64) = Tensor(builder, CppTriton.get_fp64(builder, x), Tfp64)
+Tensor(builder, x::Float16) = Tensor(builder, CppTriton.get_fp16(builder, Float32(x)), Tfp16)
 
 
-IntoTensor = Union{Bool, Int64, UInt64, Int32, UInt32, Float32, Float64}
+IntoTensor = Union{Bool, Int64, UInt64, Int32, UInt32, Float32, Float64, Float16, Tensor}
 Tensor(x::IntoTensor) = begin Tensor(get_builder_ref(), x) end
 
 @test @wcok begin
@@ -237,24 +238,27 @@ end
 @test_throws "Unsupported" @wc cast(Tensor(builder, 5.0), PointerTritonType(Tfp64))
 @test @wc (cast(Tensor(builder, 3), PointerTritonType(Tint64)); true)
 
-arange(builder, start::Integer, endd::Integer) = begin
+using Expronicon
+
+@with_scoped_builder function arange(builder, start::Integer, endd::Integer)
     start = Int32(start)
     endd = Int32(endd)
     shape = [endd - start,]
     ret_ty = BlockTritonType(Tint32, shape)
     Tensor(builder, CT.create_make_range!(builder, start, endd), ret_ty)
 end
-@declare_alias_using_scoped arange
-@test @wcok arange(builder, 0, 5)
 
-full(builder, dims::Vector{Int64}, value::Tensor) = begin
+@test @wcok arange(builder, 0, 5)
+@test @wcok with_scoped(builder) do; arange(0, 5) end
+
+@with_scoped_builder full(builder, dims::Vector{Int64}, value::Tensor) = begin
     @assert numel(value) == 1 "Value must be a scalar"
     # value = cast(value, dtype)
     ret_ty = BlockTritonType(value.type, dims)
     Tensor(builder, CT.create_splat!(builder, value.handle, collect(dims)), ret_ty)
 end
 
-full(builder, dims::Vector{Int64}, value::T, dtype) where T = begin
+@with_scoped_builder full(builder, dims::Vector{Int64}, value::T, dtype) where T = begin
     @assert is_scalar(dtype) "Value's target type must be a scalar"
     value_ir = if iszero(value)
         Tensor(builder, CT.get_null_value!(builder, construct_ir_type(builder, dtype)), dtype)
@@ -380,7 +384,7 @@ end
 @test @wc points_to_type(cast(Tensor(builder, 3), PointerTritonType(Tint32)), Tensor(builder, Int32(3)))
 @test @wc !points_to_type(cast(Tensor(builder, 3), PointerTritonType(Tint32)), Tensor(builder, Int64(3)))
 
-program_id(builder, axis) = try
+@with_scoped_builder program_id(builder, axis) = try
     Tensor(builder, CT.create_get_program_id!(builder, axis-1), Tint32)
 catch e
     if isa(e, BoundsError)
@@ -388,18 +392,67 @@ catch e
     end
     throw(e)
 end
-
 @test @wcok program_id(builder, 1)
 
-num_programs(builder, axis) = Tensor(builder, CT.create_get_num_programs!(builder, axis-1), Tint32)
+@with_scoped_builder num_programs(builder, axis) = Tensor(builder, CT.create_get_num_programs!(builder, axis-1), Tint32)
 @test @wcok num_programs(builder, 1)
 
 
 # for now, let's have no implicit casting
 
+split_arg(e) = @match e begin
+    Expr(:(::), name, Tsym) => (name, Tsym) 
+    x => begin @show x.head; throw("Binary op must take two tensors") end
+end
+
+macro binary_op_implicit_casting(fn)
+    jlfn = JLFunction(fn)
+    @assert split_arg(jlfn.args[1])[2] == :Tensor && split_arg(jlfn.args[2])[2] == :Tensor "Binary op must take two tensors"
+    @assert length(jlfn.args) == 2 "Binary op must take two tensors"
+
+    arg_names = map(x -> split_arg(x)[1], jlfn.args)
+
+    orig_args = copy(jlfn.args)
+    jlfn.args[1] = Expr(:(::), arg_names[1], :IntoTensor)
+    jlfn.body = quote
+        $(jlfn.name)(Tensor($(arg_names[1])), $(arg_names[2])) 
+    end
+    left_fn = codegen_ast(jlfn)
+
+    jlfn.args = orig_args
+    jlfn.args[2] = Expr(:(::), split_arg(jlfn.args[2])[1], :IntoTensor)
+    jlfn.body = quote
+        $(jlfn.name)($(arg_names[1]), Tensor($(arg_names[2]))) 
+    end
+    right_fn = codegen_ast(jlfn)
 
 
-Base.:+(lhs::Tensor, rhs::Tensor) = begin
+    quote
+        $(esc(fn))
+        $(esc(left_fn))
+        $(esc(right_fn))
+    end
+end
+
+# macro unary_op_implicit_casting(fn)
+#     jlfn = JLFunction(fn)
+
+#     @assert split_arg(jlfn.args[1])[2] == :Tensor "Unary op must take a tensor"
+
+#     orig_args = copy(jlfn.args)
+#     jlfn.args[1] = Expr(:(::), split_arg(jlfn.args[1])[1], :IntoTensor)
+#     jlfn.body = quote
+#         $(jlfn.name)(Tensor($(orig_args[1]))) 
+#     end
+
+#     quote
+#         $(esc(fn))
+#         $(esc(codegen_ast(jlfn)))
+#     end
+# end
+
+
+@binary_op_implicit_casting Base.:+(lhs::Tensor, rhs::Tensor) = begin
     lhs, rhs = triton_broadcast(lhs, rhs)
     @assert types_shapes_match_uptopointer(lhs, rhs) "Types and shapes must match, got x: $lhs, y: $rhs"
 
@@ -423,18 +476,20 @@ Base.:+(lhs::Tensor, rhs::Tensor) = begin
 
     throw("Can't add $lhs and $rhs")
 end
+
 @test @wcok Tensor(builder, 1.0) + Tensor(builder, 2.0)
 @test @wcok full(builder, [5,], 1.0, Tfp32) + full(builder, [5,], 2.0, Tfp32)
+@test @wcok with_scoped(builder) do; full([5,], 1.0, Tfp32) + 5.0f0 end
 @test_throws "" @wc Tensor(builder, 1.0) + Tensor(builder, 2)
 @test_throws "" @wc Tensor(builder, 1.0) + full(builder, [2,], 2.0, Tfloat64)
 
-triton_zero(builder, ty) = Tensor(builder, CT.get_null_value(builder, construct_ir_type(builder, ty)), ty)
-@test @wcok triton_zero(builder, Tint32)
+@with_scoped_builder Base.zero(builder, ty::TritonType) = Tensor(builder, CT.get_null_value(builder, construct_ir_type(builder, ty)), ty)
+@test @wcok zero(builder, Tint32)
 
-triton_all_ones(builder, ty) = Tensor(builder, CT.get_all_ones_value(builder, construct_ir_type(builder, ty)), ty)
+@with_scoped_builder triton_all_ones(builder, ty) = Tensor(builder, CT.get_all_ones_value(builder, construct_ir_type(builder, ty)), ty)
 @test @wcok triton_all_ones(builder, Tint32)
 
-triton_one(builder, ty) = @match ty begin
+@with_scoped_builder Base.one(builder, ty::TritonType) = @match ty begin
     Tint64 => Tensor(builder, Int64(1))
     Tint32 => Tensor(builder, Int32(1))
     Tfp64 => Tensor(builder, Float64(1.0))
@@ -444,9 +499,9 @@ triton_one(builder, ty) = @match ty begin
     Tuint8 => Tensor(builder, UInt8(1))
     Tint1 => Tensor(builder, true)
 end
-@test @wcok triton_one(builder, Tint32)
+@test @wcok one(builder, Tint32)
 
-Base.:-(x::Tensor, y::Tensor) = begin
+@binary_op_implicit_casting Base.:-(x::Tensor, y::Tensor) = begin
     x, y = triton_broadcast(x, y)
     @assert types_shapes_match_uptopointer(x, y) "Types and shapes must match, got x: $x, y: $y"
     if is_pointer(x)
@@ -466,12 +521,12 @@ end
 
 Base.:-(x::Tensor) = begin
     is_pointer(x) && throw("Can't negate a pointer")
-    triton_zero(x.builder, x.type) - x
+    zero(x.builder, x.type) - x
 end 
 @test @wcok -Tensor(builder, 1.0)
 @test @wcok cast(Tensor(builder, 1), PointerTritonType(Tint64)) - Tensor(builder, Int32(2))
 
-Base.:*(x::Tensor, y::Tensor) = begin
+@binary_op_implicit_casting Base.:*(x::Tensor, y::Tensor) = begin
     x, y = triton_broadcast(x, y)
     @assert types_shapes_match(x, y) "Types and shapes must match, got x: $x and y: $y"
     if is_floating(x.type) && is_floating(y.type)
@@ -484,7 +539,7 @@ Base.:*(x::Tensor, y::Tensor) = begin
 end
 @test @wcok Tensor(builder, 1.0) * Tensor(builder, 2.0)
 
-Base.:/(x::Tensor, y::Tensor) = begin
+@binary_op_implicit_casting Base.:/(x::Tensor, y::Tensor) = begin
     x, y = triton_broadcast(x, y)
     @assert shapes_match(x, y) "Shapes must match, got x: $x and y: $y"
     if is_floating(x.type) && is_integer(y.type)
@@ -506,7 +561,7 @@ end
 @test @wc (Tensor(builder, 1.0) / Tensor(builder, 2.0f0)).type == Tfp64
 @test @wcok Tensor(builder, 1.0) / Tensor(builder, 2)
 
-Base.div(x::Tensor, y::Tensor) = begin
+@binary_op_implicit_casting Base.div(x::Tensor, y::Tensor) = begin
     x, y = triton_broadcast(x, y)
     @assert types_shapes_match(x, y) "Shapes must match, got x: $x and y: $y"
     if is_integer(x.type) && is_integer(y.type)
@@ -521,11 +576,11 @@ end
 @test @wcok Tensor(builder, 1) ÷ Tensor(builder, 2)
 @test_throws "" @wc Tensor(builder, 1.0) ÷ Tensor(builder, 2.0)
 
-cdiv(x::Tensor, y::Tensor) = (x + y - triton_one(x.builder, x.type)) ÷ y
+@binary_op_implicit_casting cdiv(x::Tensor, y::Tensor) = (x + y - one(x.builder, x.type)) ÷ y
 cdiv(x::T, y::U) where {T <: Integer, U <: Integer} = ((x + y) - one(U)) ÷ y
 @test @wcok cdiv(Tensor(builder, 5), Tensor(builder, 2))
 
-Base.rem(x::Tensor, y::Tensor) = begin
+@binary_op_implicit_casting Base.rem(x::Tensor, y::Tensor) = begin
     x, y = triton_broadcast(x, y)
     @assert types_shapes_match(x, y) "Types and shapes must match"
     if is_integer(x.type) && is_integer(y.type)
@@ -556,7 +611,7 @@ COMPARISON_OPS = [
 ]
 for (op_name, float_op, signed_op, unsigned_op) in COMPARISON_OPS
     eval(quote
-        Base.$op_name(x::Tensor, y::Tensor) = begin
+        @binary_op_implicit_casting Base.$op_name(x::Tensor, y::Tensor) = begin
             x, y = triton_broadcast(x, y)
             @assert types_shapes_match(x, y) "Types and shapes must match, got x: $x and y: $y"
             return_ty = change_scalar_type(x.type, Tint1)
@@ -636,14 +691,15 @@ broadcast_impl_shape(x::Tensor, shape) = let
         end
     end
 end
+broadcast_impl_shape(x::IntoTensor, shape) = broadcast_impl_shape(Tensor(x), shape)
 @test @wc size(broadcast_impl_shape(Tensor(builder, 1.0), [2, 3])) == [2, 3]
 @test @wc begin
     res = broadcast_impl_shape(full(builder, [2, 1, 3], 1.0, Tfp32), [2, 5, 3])
     size(res) == [2, 5, 3] && scalar_type(res.type) == Tfp32
 end
 
-triton_zeros(builder, dims, ty) = broadcast_impl_shape(triton_zero(builder, ty), dims)
-@test @wcok triton_zeros(builder, [2,], Tint32)
+@with_scoped_builder Base.zeros(builder, ty::TritonType, dims) = broadcast_impl_shape(zero(builder, ty), dims)
+@test @wcok zeros(builder, Tint32, [2,])
 
 _string_to_load_cache_modifier(x) = begin
     if x == ".ca" return CppTriton.CM_CA end
@@ -712,7 +768,10 @@ end
 end
 
 
-load(ptr::Tensor; mask::Union{Tensor, Nothing}=nothing, other::Union{Tensor, Nothing}=nothing, cache="", eviction="", is_volatile=false) = begin
+load(ptr::IntoTensor; mask::Union{IntoTensor, Nothing}=nothing, other::Union{IntoTensor, Nothing}=nothing, cache="", eviction="", is_volatile=false) = begin
+    ptr = Tensor(ptr)
+    if !isnothing(mask); mask = Tensor(mask) end
+    if !isnothing(other); other = Tensor(other) end
     _load_legacy(ptr, mask, other, _string_to_load_cache_modifier(cache), _string_to_eviction_policy(eviction), is_volatile)
 end
 
@@ -754,26 +813,24 @@ end
     _store_legacy(ptr, val, nothing, CppTriton.CM_NONE, CppTriton.EP_NORMAL)
 end
 
-store(ptr::Tensor, val::Tensor; mask::Union{Tensor, Nothing}=nothing, cache="", eviction="") = begin
-    _store_legacy(ptr, val, mask, _string_to_store_cache_modifier(cache), _string_to_eviction_policy(eviction))
+store(ptr::IntoTensor, val::IntoTensor; mask::Union{IntoTensor, Nothing}=nothing, cache="", eviction="") = begin
+    _store_legacy(Tensor(ptr), Tensor(val), isnothing(mask) ? nothing : Tensor(mask), _string_to_store_cache_modifier(cache), _string_to_eviction_policy(eviction))
 end
 
 
-triton_return(builder) = begin
+@with_scoped_builder triton_return(builder) = begin
     CT.ret!(builder, CT.CxxRef{CT.Value}[])
 end
 @test @wcok triton_return(builder)
 
-device_print(builder, prefix, args...) = begin
+@with_scoped_builder device_print(builder, prefix, args...) = begin
     handles = collect(map(x -> Base.unsafe_convert(CT.CxxRef{CT.Value}, CT.CxxRef(x.handle)), args))
     CT.create_print!(builder, prefix, handles)
 end
 @test @wcok device_print(builder, "hello", full(builder, [2, 3], 5, Tint64), full(builder, [2, 3], 5, Tint64))
 
 
-subtypes(CT.ValueAllocated)
-
-triton_yield(builder, vs::Vararg{Tensor}) = begin
+@with_scoped_builder triton_yield(builder, vs::Vararg{Tensor}) = begin
     if isempty(vs)
         CT.create_yield_op!(builder, CT.CxxRef{CT.Value}[])
     else
@@ -783,7 +840,9 @@ end
 @test @wcok triton_yield(builder, full(builder, [2, 3], 5, Tint64), full(builder, [2, 3], 5, Tint64))
 
 
-triton_where(cond::Tensor, x::Tensor, y::Tensor) = begin
+triton_where(cond::IntoTensor, x::IntoTensor, y::IntoTensor) = begin
+    cond = Tensor(cond); x = Tensor(x); y = Tensor(y)
+    
     cond = cast(cond, Tint1)
 
     if is_block(cond.type)
@@ -809,8 +868,8 @@ end
 end
 
 
-Base.min(x::Tensor, y::Tensor) = triton_where(x < y, x, y)
-Base.max(x::Tensor, y::Tensor) = triton_where(x > y, x, y)
+@binary_op_implicit_casting Base.min(x::Tensor, y::Tensor) = triton_where(x < y, x, y)
+@binary_op_implicit_casting Base.max(x::Tensor, y::Tensor) = triton_where(x > y, x, y)
 @test @wcok begin
     x = full(builder, [2, 3], 5, Tint64)
     y = full(builder, [2, 3], 2, Tint64)
@@ -832,7 +891,7 @@ dot(x::Tensor, y::Tensor; allow_tf32 = true) = begin
         (_, Tfp16) => Tfp16
         (_, _) => Tfp32
     end
-    accum = triton_zero(x.builder, accum_type)
+    accum = zero(x.builder, accum_type)
     M = size(x, 1)
     N = size(y, 2)
     accum_splat = CT.create_splat!(x.builder, accum.handle, [M, N])
@@ -859,7 +918,7 @@ dot_fma(x::Tensor, y::Tensor, accum::Tensor; allow_tf32 = true) = begin
     #     (_, Tfp16) => Tfp16
     #     (_, _) => Tfp32
     # end
-    # accum = triton_zero(x.builder, accum_type)
+    # accum = zero(x.builder, accum_type)
     # M = size(x, 1)
     # N = size(y, 2)
     # accum_splat = CT.create_splat!(x.builder, accum.handle, [M, N])

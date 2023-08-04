@@ -21,8 +21,13 @@ tupleize(xs::Tuple{Vararg{T}}) where T = xs
 tupleize(x::T) where T = (x,)
 # tupleize(nothing) = (x,)
 
-triton_for!(fn, lb::Tensor, ub::Tensor, step::Tensor, init_arguments::Vararg{Tensor}) = begin
-    bd = lb.builder
+triton_for!(fn, lb::IntoTensor, ub::IntoTensor, step::IntoTensor, init_arguments::Vararg{Tensor}) = begin
+    bd = get_builder_ref()
+    lb = Tensor(lb)
+    ub = Tensor(ub)
+    step = Tensor(step)
+
+    # bd = lb.builder
     through_var_types = [t.type for t in init_arguments]
 
     for_op = CT.create_for_op!(bd, lb.handle, ub.handle, step.handle, CT.StdVector([ia.handle for ia in init_arguments]))
@@ -38,7 +43,8 @@ triton_for!(fn, lb::Tensor, ub::Tensor, step::Tensor, init_arguments::Vararg{Ten
     @assert length(through_arg_handles) == length(init_arguments)
     through_args = [Tensor(bd, h, t) for (h, t) in zip(through_arg_handles, through_var_types)]
 
-    res_vars = fn(cast(ind_var, Tint32), through_args...) |> tupleize 
+    res_vars = fn(ind_var, through_args...) |> tupleize 
+    # res_vars = fn(cast(ind_var, Tint32), through_args...) |> tupleize 
 
     @assert length(res_vars) == length(through_var_types)
     @assert [t.type for t in res_vars] == through_var_types
@@ -49,10 +55,14 @@ triton_for!(fn, lb::Tensor, ub::Tensor, step::Tensor, init_arguments::Vararg{Ten
     return get_op_results(bd, for_op, through_var_types)
 end
 
-triton_for!(fn, builder, lb::Number, ub::Number, step::Number, init_arguments::Vararg{Tensor}) = begin
-    triton_for!(fn, Tensor(builder, lb), Tensor(builder, ub), Tensor(builder, step), init_arguments...)
-end
+# triton_for!(fn, builder, lb::Number, ub::Number, step::Number, init_arguments::Vararg{Tensor}) = begin
+#     triton_for!(fn, Tensor(builder, lb), Tensor(builder, ub), Tensor(builder, step), init_arguments...)
+# end
 
+# triton_for!(fn, lb::Number, ub::Number, step::Number, init_arguments::Vararg{Tensor}) = begin
+
+#     triton_for!(fn, Tensor(builder, lb), Tensor(builder, ub), Tensor(builder, step), init_arguments...)
+# end
 
 
 

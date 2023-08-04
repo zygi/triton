@@ -232,7 +232,7 @@ function compile_module!(mod, ctx, arch::Integer, entry::AbstractString;
     recommended_shared_memory = CT.get_shared_memory_size(mod)
 
     ptx = llir_to_ptx!(llir, arch)
-    if print_final_ptx
+    if print_final_ptx && isinteractive()
         # @info "Final PTX:\n" * ptx
         clipboard(ptx)
     end

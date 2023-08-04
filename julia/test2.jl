@@ -1,6 +1,7 @@
 include("TritonCxxWrap.jl")
-
+##
 using CUDA
+using OrderedCollections
 const CT = CppTriton
 
 include("global_implicit.jl")
@@ -11,25 +12,34 @@ include("ops.jl")
 
 ##
 
+# [v for (k, v) in OrderedDict([:a => 1, :b => 2, :c => 3])]
 
-compile_function(fn, arg_types, val_args; print_mlir=false, kwargs...) = begin
+# Make them OrderedDict for debuggability
+compile_function(fn, arg_types::OrderedDict, val_args::OrderedDict; print_mlir=false, kwargs...) = begin
     ctx = CppTriton.MLIRContext()
     CppTriton.load_triton!(ctx)
     builder = CppTriton.TritonOpBuilder(CppTriton.CxxWrap.CxxPtr(ctx))
     mod = CppTriton.create_module!(builder)
 
-    fn_op = CT.get_or_insert_function!(builder, mod, "test_name", get_fn_type(builder, arg_types), "public", false)
+    fn_op = CT.get_or_insert_function!(builder, mod, "test_name", get_fn_type(builder, values(arg_types)), "public", false)
     CT.push_back!(mod, fn_op)
 
     entry = CT.add_entry_block!(fn_op)
     insert_pt = CT.get_insertion_block(builder)
     CT.set_insertion_point_to_start!(builder, CT.CxxRef(entry))
     function_args = [CT.arg(CT.CxxRef(entry), i - 1) for i in 1:CT.get_num_arguments(entry)]
-    arg_tensors = [Tensor(builder, arg_handle, arg_type) for (arg_handle, arg_type) in zip(function_args, arg_types)]
+    arg_tensors = OrderedDict([arg_sym => Tensor(builder, arg_handle, arg_type) for (arg_handle, (arg_sym, arg_type)) in zip(function_args, arg_types)])
 
     # tensorise_val(::Val{x}) where {x} = Tensor(builder, x)
+    # @assert length(methods(fn)) == 1 "TODO handle multiple methods"
+    # _, decls, _, _ =   Base.arg_decl_parts(methods(fn)[1])
+    # args = decls[2:end]
 
-    fn(builder, arg_tensors..., val_args...)
+
+    # @show decls
+
+    with_scoped(builder) do; fn(; arg_tensors..., val_args...) end
+    # with_scoped(builder) do; fn(arg_tensors..., values(val_args)...) end
     # fn(builder, arg_tensors..., (Tensor(builder, a) for a in val_args)...)
 
     if print_mlir
@@ -42,8 +52,8 @@ end
 
 # Int64(-1)
 
-test_kernel(bd, in_ptr::Tensor, out_ptr::Tensor, n::Tensor, extra_increment::Int32) = begin
-    pid = program_id(bd, 1)
+test_kernel(; in_ptr::Tensor, out_ptr::Tensor, n::Tensor, extra_increment::Int32) = begin
+    pid = program_id(1)
     my_ptr = in_ptr + pid
 
     # @show broadcast_impl_shape(Tensor(bd, Int64(1)), [8,])
@@ -55,33 +65,35 @@ test_kernel(bd, in_ptr::Tensor, out_ptr::Tensor, n::Tensor, extra_increment::Int
     # device_print(bd, "test2 ", (Tensor(bd, Int64(-1)) < Tensor(bd, Int64(0))) - Tensor(bd, true))
     # device_print(bd, "test2 ", Tensor(bd, CT.get_int1(bd, true), Tint1))
     # device_print(bd, "test2 ", Tensor(bd, true))
-    # device_print(bd, "test2 ", triton_one(bd, Tint64))
+    # device_print(bd, "test2 ", one(bd, Tint64))
     # @show construct_ir_type(bd, Tint64)
 
     # device_print(bd, "test2 ", Tensor(bd, CT.get_all_ones_value(bd, construct_ir_type(bd, Tint64)), Tint64))
     # device_print(bd, "test2 ", Tensor(bd, Int64(1)))
-    # triton_one(builder, Tint64)
+    # one(builder, Tint64)
     # device_print(bd, "test3 ", Tensor(bd, CppTriton.get_int64(bd, -1), Tint64))
     
-    accum = Tensor(bd, Int32(0))
-    accum2 = Tensor(bd, Int32(0))
-    (final_accum, accum2) = triton_for!(bd, Int32(0), Int32(5), Int32(1), accum, accum2) do i, accum, accum2
-        in = load(my_ptr; mask=Tensor(bd, true), other=Tensor(bd, 0.0f0))
-        return (accum + i + Tensor(bd, extra_increment), accum2) #+ Tensor(bd, EXTRA_INCREMENT) #+ cast(in, Tint64)
+    accum = zero(Tint32)
+    accum2 = zero(Tint32)
+    (final_accum, accum2) = triton_for!(Int32(0), Int32(5), Int32(1), accum, accum2) do i, accum, accum2
+        in = load(my_ptr; mask=Tensor(true), other=Tensor(0.0f0))
+        return (accum + i + Tensor(extra_increment), accum2) #+ Tensor(bd, EXTRA_INCREMENT) #+ cast(in, Tint64)
     end
 
     store(out_ptr + pid, cast(final_accum, Tfp32))
-    triton_return(bd)
+    triton_return()
 end
 
+arg_types = OrderedDict([:in_ptr => PointerTritonType(Tfp32), :out_ptr => PointerTritonType(Tfp32), :n => Tint32])
+template_vals = OrderedDict([:extra_increment => Int32(1)])
 
-cufun, ctx, shmem = compile_function(test_kernel, [ PointerTritonType(Tfp32), PointerTritonType(Tfp32), Tint32 ], [Int32(1)];
+cufun, ctx, shmem = compile_function(test_kernel, arg_types, template_vals;
     print_mlir=true, print_opt_ttir=true)
 
 # shmem
 
 @test begin
-    cufun, ctx = compile_function(test_kernel, [ PointerTritonType(Tfp32), PointerTritonType(Tfp32), Tint32 ], [Int32(1)];
+    cufun, ctx = compile_function(test_kernel, arg_types, template_vals;
         print_mlir=true, print_opt_ttir=true)
     test_a = CUDA.ones(Float32, 64)
     test_out = CUDA.zeros(Float32, 64)
@@ -95,143 +107,290 @@ end
 
 
 
+DATA_TYPE = Tfp16
+dynamic_argument_types = OrderedDict([
+    :a_ptr => PointerTritonType(DATA_TYPE),
+    :b_ptr => PointerTritonType(DATA_TYPE),
+    :c_ptr => PointerTritonType(DATA_TYPE),
+    :M => Tint32,
+    :N => Tint32,
+    :K => Tint32,
+    :stride_ak => Tint32,
+    :stride_bn => Tint32,
+    :stride_cn => Tint32,
+])
 
+static_arg_values = OrderedDict([k => Int32(v) for (k, v) in 
+[
+    :stride_am => 1,
+    :stride_bk => 1, 
+    :stride_cm => 1,
+    :BLOCK_SIZE_M => 128,
+    :BLOCK_SIZE_N => 128,
+    :BLOCK_SIZE_K => 32,
+    :GROUP_SIZE_M => 8,
+]])
 
-
-matmul_kernel(builder,
+matmul_kernel(; # note: all of these are kwargs
     a_ptr, b_ptr, c_ptr,
     M, N, K,
-    stride_am,
-    stride_bk, 
-    stride_cm,
-
     stride_ak,
     stride_bn,
     stride_cn,
-
+    stride_am,
+    stride_bk, 
+    stride_cm,
     BLOCK_SIZE_M,
     BLOCK_SIZE_N,
     BLOCK_SIZE_K,
     GROUP_SIZE_M) = begin
-    
-    pid = program_id(builder, 1)
-    num_pid_m = cdiv(M, Tensor(builder, BLOCK_SIZE_M))
-    num_pid_n = cdiv(N, Tensor(builder, BLOCK_SIZE_N))
-    num_pid_in_group = Tensor(builder, GROUP_SIZE_M) * num_pid_n
+
+    pid = program_id(1)
+    num_pid_m = cdiv(M, BLOCK_SIZE_M)
+    num_pid_n = cdiv(N, BLOCK_SIZE_N)
+    num_pid_in_group = GROUP_SIZE_M * num_pid_n
     group_id = pid ÷ num_pid_in_group
-    first_pid_m = group_id * Tensor(builder, GROUP_SIZE_M)
-    group_size_m = min(num_pid_m - first_pid_m, Tensor(builder, GROUP_SIZE_M))
+    first_pid_m = group_id * GROUP_SIZE_M
+    group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
     pid_m = first_pid_m + (pid % group_size_m)
     pid_n = (pid % num_pid_in_group) ÷ group_size_m
 
-    offs_am = (pid_m * Tensor(builder, BLOCK_SIZE_M) + arange(builder, 0, BLOCK_SIZE_M)) % M
-    offs_bn = (pid_n * Tensor(builder, BLOCK_SIZE_N) + arange(builder, 0, BLOCK_SIZE_N)) % N
-    offs_k = arange(builder, 0, BLOCK_SIZE_K)
-    a_ptrs = a_ptr + (expanddims(offs_am, 2) * stride_am + expanddims(offs_k, 1) * Tensor(builder, stride_ak))
-    b_ptrs = b_ptr + (expanddims(offs_k, 2) * stride_bk + expanddims(offs_bn, 1) * Tensor(builder, stride_bn))
-    accumulator = triton_zeros(builder, [BLOCK_SIZE_M, BLOCK_SIZE_N], Tfp32)
+    offs_am = (pid_m * BLOCK_SIZE_M + arange(0, BLOCK_SIZE_M)) % M
+    offs_bn = (pid_n * BLOCK_SIZE_N + arange(0, BLOCK_SIZE_N)) % N
+    offs_k = arange(0, BLOCK_SIZE_K)
+    a_ptrs = a_ptr + (expanddims(offs_am, 2) * stride_am + expanddims(offs_k, 1) * stride_ak)
+    b_ptrs = b_ptr + (expanddims(offs_k, 2) * stride_bk + expanddims(offs_bn, 1) * stride_bn)
+    accumulator = zeros(DATA_TYPE, [BLOCK_SIZE_M, BLOCK_SIZE_N])
     
     (accumulator, a_ptrs, b_ptrs) =
-        triton_for!(Tensor(builder, Int32(0)), cdiv(K, Tensor(builder, BLOCK_SIZE_K)), Tensor(builder, Int32(1)), 
+        # control flow functional for now
+        triton_for!(Tensor(Int32(0)), cdiv(K, Tensor(BLOCK_SIZE_K)), Tensor(Int32(1)), 
             accumulator, a_ptrs, b_ptrs) do k, accumulator, a_ptrs, b_ptrs
-            a = load(a_ptrs; mask=expanddims(offs_k, 1) < K - k * Tensor(builder, BLOCK_SIZE_K), other=triton_zero(builder, Tfp32))            
-            b = load(b_ptrs; mask=expanddims(offs_k, 2) < K - k * Tensor(builder, BLOCK_SIZE_K), other=triton_zero(builder, Tfp32))
+            a = load(a_ptrs; mask=expanddims(offs_k, 1) < K - k * BLOCK_SIZE_K, other=Float16(0))            
+            b = load(b_ptrs; mask=expanddims(offs_k, 2) < K - k * BLOCK_SIZE_K, other=Float16(0))
 
             accumulator = accumulator + dot(a, b; allow_tf32=true)
 
-            a_ptrs = a_ptrs + Tensor(builder, BLOCK_SIZE_K) * Tensor(builder, stride_ak)
-            b_ptrs = b_ptrs + Tensor(builder, BLOCK_SIZE_K) * stride_bk
+            a_ptrs = a_ptrs + BLOCK_SIZE_K * stride_ak
+            b_ptrs = b_ptrs + BLOCK_SIZE_K * stride_bk
             return (accumulator, a_ptrs, b_ptrs)
         end
 
-    offs_cm = pid_m * Tensor(builder, BLOCK_SIZE_M) + arange(builder, 0, BLOCK_SIZE_M)
-    offs_cn = pid_n * Tensor(builder, BLOCK_SIZE_N) + arange(builder, 0, BLOCK_SIZE_N)
-    c_ptrs = c_ptr + stride_cm * expanddims(offs_cm, 2) + Tensor(builder, stride_cn) * expanddims(offs_cn, 1)
+    offs_cm = pid_m * BLOCK_SIZE_M + arange(0, BLOCK_SIZE_M)
+    c_ptrs_offset_1 = stride_cm * expanddims(offs_cm, 2)
+    offs_cn = pid_n * BLOCK_SIZE_N + arange(0, BLOCK_SIZE_N)    
+    c_ptrs_offset_2 = stride_cn * expanddims(offs_cn, 1)
+
+    c_ptrs = c_ptr + c_ptrs_offset_1 + c_ptrs_offset_2
     c_mask = (expanddims(offs_cm, 2) < M) & (expanddims(offs_cn, 1) < N)
     store(c_ptrs, accumulator; mask=c_mask)
 
-    triton_return(builder)
+    triton_return()
 end
 
-DATA_TYPE = Tfp32
-arg_types = [
-    PointerTritonType(Tfp32),
-    PointerTritonType(Tfp32),
-    PointerTritonType(Tfp32),
-    Tint32, Tint32, Tint32,
-    Tint32, Tint32, Tint32,
-    # Tint32, Tint32, Tint32,
-]
+
+
+compile_and_package(matmul_kernel, dynamic_argument_types, static_arg_values;
+    num_warps=8, 
+    num_stages=5,
+    kwargs...
+    ) = begin
+    cufun, ctx, SHMEM = compile_function(matmul_kernel, dynamic_argument_types, static_arg_values;
+        print_mlir=true,
+        num_warps=num_warps, 
+        print_opt_ttir=true,
+        print_final_ptx=true,
+        num_stages=num_stages,
+        kwargs...
+        )
+    
+        
+end
+
 
 SZ = 4096
-template_vals = Int32[1, 1, 1, 128, 64, 32, 8]
 
-NUM_WARPS = 4
-cufun, ctx, SHMEM = compile_function(matmul_kernel, arg_types, template_vals; print_mlir=true, num_warps=NUM_WARPS, 
+NUM_WARPS = 8
+cufun, ctx, SHMEM = compile_function(matmul_kernel, dynamic_argument_types, static_arg_values;
+    print_mlir=true,
+    num_warps=NUM_WARPS, 
     print_opt_ttir=true,
-    num_stages=4
+    print_final_ptx=true,
+    num_stages=5
     # print_final_ptx=true
     )
+SHMEM 
 
-SHMEM
+
+triton_type_to_julia_ctype(x::ScalarTritonType) = @match x begin
+    # Tvoid 
+    Tint1 => Cuchar
+    Tint8 => Cuchar
+    Tuint8 => Cuchar
+    Tint16 => Cshort
+    Tuint16 => Cushort
+    Tint32 => Cint
+    Tuint32 => Cuint
+    Tint64 => Clonglong
+    Tuint64 => Culonglong
+    # Tfp8e5  => UInt8
+    # Tfp8e4  => Float16
+    # Tfp8e4b15 => Float16
+    Tfp16 => Cushort # maybe? idk
+    # Tbf16 
+    Tfp32 => Cfloat
+    Tfp64 => Cdouble
+end
+triton_type_to_julia_ctype(x::PointerTritonType) = CuPtr{triton_type_to_julia_ctype(x.scalar)}
+
+# get_argtypes_t(::Val{triton_type_tuple}) where {triton_type_tuple} = map(x -> zero(triton_type_to_julia_ctype(x)), triton_type_tuple)
+# # get_argtypes_t(Val((Tint32,)))
+# tpl = (values(dynamic_argument_types)...,)
+# get_argtypes_t(Val((PointerTritonType(Tint32),)))
+
+# get_argtypes_t(Val((values(dynamic_argument_types)...,)))
+
+
+# arg_ctypes = Tuple([triton_type_to_julia_type(x) for x in values(dynamic_argument_types)])
+
+struct TritonKernel{F, M, FF}
+    fun::F
+    dynarg_ctypes
+    dynarg_tritontype_dict
+    required_dyn_shmem
+    num_warps
+    metadata::M
+    num_blocks_fn::FF    
+end
+
+TritonKernel(fun::F,dynamic_argument_typedict, required_dyn_shmem, num_warps, metadata::M, num_blocks_mapping::FF) where {F, M, FF} = begin
+    dynarg_ctypes = [triton_type_to_julia_ctype(x) for x in values(dynamic_argument_typedict)]
+    attributes(fun)[CUDA.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES] = SHMEM
+    TritonKernel{F, M, FF}(fun, dynarg_ctypes, dynamic_argument_typedict, required_dyn_shmem, num_warps, metadata, num_blocks_mapping)
+end
+
+_quicktypecheck(::CuPtr{T}, x::CuArray{T}) where T = true
+_quicktypecheck(::T, x::T) where T = true
+_quicktypecheck(::T, x) where T = false
+
+function (kernel::TritonKernel)(args...; threads::CuDim=(32*kernel.num_warps), blocks::Union{CuDim, Nothing}=nothing)
+    @assert length(args) == length(kernel.dynarg_ctypes)
+    converted_args = args
+    dynarg_mapping = Dict(zip(keys(kernel.dynarg_tritontype_dict), args))
+    if isnothing(blocks)
+        blocks = kernel.num_blocks_fn(dynarg_mapping, kernel.metadata)
+    end
     
+    # @show collect(zip(keys(kernel.dynarg_ctypes), args))
+
+    types_match = [_quicktypecheck(x, y) for (x, y) in zip(kernel.dynarg_ctypes, args)]
+
+    @assert all(types_match) "Type mismatch: $types_match"
+
+    # @show blocks
+
+    # converted_args = [cudaconvert(y) for (x, y) in zip(kernel.dynarg_ctypes, args)]
+    # @show converted_args
+    # @show (kernel.dynarg_ctypes...,)
+    CUDA.cudacall(kernel.fun, (kernel.dynarg_ctypes...,), converted_args...; threads=threads, blocks=blocks, shmem=kernel.required_dyn_shmem)
+end 
+
+##
+
+tk = TritonKernel(
+    cufun,
+    dynamic_argument_types,
+    SHMEM,
+    NUM_WARPS,
+    static_arg_values,
+    (dyn_args, static_args) -> cdiv(dyn_args[:M], static_args[:BLOCK_SIZE_M]) * cdiv(dyn_args[:N], static_args[:BLOCK_SIZE_N]) 
+    )
+
+a = CUDA.rand(Float16, SZ, SZ)
+b = CUDA.rand(Float16, SZ, SZ)
+out = CUDA.zeros(Float16, SZ, SZ)
+
+# CUDA.cudaconvert(a) |> CUDA.device_pointer
+
+num_blocks = cdiv(SZ, static_arg_values[:BLOCK_SIZE_M]) * cdiv(SZ, static_arg_values[:BLOCK_SIZE_N])
+
+tk(a, b, out, SZ, SZ, SZ, SZ, SZ, SZ)
+
+out - a * b
+# Base.to_tuple_type(5)
+
+# exception_ptr = CUDA.create_exceptions!(cufun.mod)
+# mm = methods(matmul_kernel)[1]
+# hk = CUDA.HostKernel{eltype(mm),arg_ctypes}(mm, cufun, CUDA.KernelState(exception_ptr))
+
+# attributes(hk.fun)[CUDA.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES] = SHMEM
+
+# dynshmem(hk) = CUDA.attributes(hk.fun)[CUDA.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES]
+
+# dynshmem(hk)
 
 
-# SHMEM=98304
+CUDA.maxthreads(hk)
+
+CUDA.cufunction(matmul_kernel, )
+
 CUDA.cuFuncSetAttribute(cufun, CUDA.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, SHMEM)
 
 
-# CUDA.@device_code_sass cufun
 
-a = CUDA.rand(Float32, SZ, SZ)
-b = CUDA.rand(Float32, SZ, SZ)
-out = CUDA.zeros(Float32, SZ, SZ)
-
-# strides(a)
-num_blocks = cdiv(SZ, template_vals[4]) * cdiv(SZ, template_vals[5])
 ##
 
 using BenchmarkTools
 
-
-CUDA.@sync CUDA.cudacall(cufun, 
-    (CuPtr{Cfloat},CuPtr{Cfloat},CuPtr{Cfloat},Cint,Cint,Cint,Cint,Cint,Cint),#,Cint,Cint,Cint),
-    #  a, b, out, SZ, SZ, SZ, 1, SZ, 1, SZ, 1, SZ; 
-     a, b, out, SZ, SZ, SZ, SZ, SZ, SZ; 
-    #  blocks=prod(size(out)) ÷ NUM_WARPS,
-    # blocks=1,
-    shmem=SHMEM,
-    # blocks=1,
-    blocks=num_blocks,
-    threads=(32*NUM_WARPS, )
-    # threads=1
+function do_mult(a, b, out)
+    CUDA.@sync CUDA.cudacall(cufun, 
+        (CuPtr{Cfloat},CuPtr{Cfloat},CuPtr{Cfloat},Cint,Cint,Cint,Cint,Cint,Cint),#,Cint,Cint,Cint),
+        #  a, b, out, SZ, SZ, SZ, 1, SZ, 1, SZ, 1, SZ; 
+        a, b, out, SZ, SZ, SZ, SZ, SZ, SZ; 
+        #  blocks=prod(size(out)) ÷ NUM_WARPS,
+        # blocks=1,
+        shmem=SHMEM,
+        # blocks=1,
+        blocks=num_blocks,
+        threads=(32*NUM_WARPS, )
+        # threads=1
     )
+end
+
+do_mult(a, b, out)
+
+using NVTX
+NVTX.@range "triton" begin do_mult(a, b, out) end
 
 
-convert(CuArray{Float16}, a) * convert(CuArray{Float16}, b) - a * b
+
+# convert(CuArray{Float16}, a) * convert(CuArray{Float16}, b) - a * b
+
+# a * b - out
+
 # a
 
 using LinearAlgebra
+using BenchmarkTools
 
-@btime begin
-    CUDA.@sync LinearAlgebra.mul!(out, a, b)
-end
+# triton matmul
+println("JuliaTriton bench, DIM=4096, FP16, no tuning")
+@benchmark do_mult(a, b, out) setup=( a=CUDA.rand(Float16, SZ, SZ), b=CUDA.rand(Float16, SZ, SZ), out=CUDA.zeros(Float16, SZ, SZ) )
+
+# cuBLAS matmul
+println("\n\n")
+println("CuBLAS bench, DIM=4096, FP16")
+@benchmark begin
+    CUDA.@sync LinearAlgebra.mul!(out, a', b')
+end setup=( a=CUDA.rand(Float16, SZ, SZ), b=CUDA.rand(Float16, SZ, SZ), out=CUDA.zeros(Float16, SZ, SZ) )
+
+matmul_flops(N) = 2N^3
+matmul_flops(SZ) / 0.00282 / 1e12
 
 
-@btime begin
-    CUDA.@sync CUDA.cudacall($cufun, 
-    (CuPtr{Cfloat},CuPtr{Cfloat},CuPtr{Cfloat},Cint,Cint,Cint,Cint,Cint,Cint),#,Cint,Cint,Cint),
-    #  a, b, out, SZ, SZ, SZ, 1, SZ, 1, SZ, 1, SZ; 
-     $a, $b, $out, SZ, SZ, SZ, SZ, SZ, SZ; 
-    #  blocks=prod(size(out)) ÷ NUM_WARPS,
-    # blocks=1,
-    shmem=SHMEM,
-    # blocks=1,
-    blocks=num_blocks,
-    threads=(32*NUM_WARPS, )
-    # threads=1
-    )
-end
+CUDA.CUBLAS.cublasSetMathMode(CUDA.CUBLAS.handle(), CUDA.CUBLAS.CUBLAS_MATH_DISALLOW_REDUCED_PRECISION_REDUCTION)
+
+
 
 collect(a) * collect(b) - collect(a * b)
 
@@ -403,7 +562,7 @@ test_kernel(x_ptr, y_ptr, output_ptr, n_elements) = begin
     offsets = block_start + arange(builder, 0, BLOCK_SIZE)
     mask = offsets < n_elements
     offsets_int64 = cast(offsets, Tint64)
-    other = triton_zero(builder, base_scalar_type(output_ptr.type))
+    other = zero(builder, base_scalar_type(output_ptr.type))
     x = load(x_ptr + offsets_int64; mask=mask, other=other)
     y = load(y_ptr+ offsets_int64; mask=mask, other=other)
     output = x + y

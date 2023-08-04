@@ -16,11 +16,21 @@ with_scoped(fn, x::U) where {U <: _global_T} = begin
     end
 end
 
-macro declare_alias_using_scoped(fn)
-    @assert fn isa Symbol
+
+macro with_scoped_builder(fn)
+    jlfn = JLFunction(fn)
+    @assert length(jlfn.args) >= 1 "Function must have at least one argument"
+    @assert jlfn.args[1] == :builder "First argument must be builder"
+
+    jlfn.args = jlfn.args[2:end]
+    jlfn.body = quote
+        builder = get_builder_ref()
+        $(jlfn.body)
+    end
+
     quote
-        function $(fn)(args...)
-            $(fn)(get_builder_ref(), args...)
-        end
+        $(esc(fn))
+
+        $(esc(codegen_ast(jlfn)))
     end
 end
