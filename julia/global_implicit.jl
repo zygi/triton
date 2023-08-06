@@ -1,6 +1,6 @@
 const _global_T = CT.TritonOpBuilder
 const _ref = Ref{Union{<:_global_T, Nothing}}(nothing)
-get_builder_ref() = begin
+@inline get_builder_ref() = begin
     @assert !isnothing(_ref[]) "The global implicit $(_global_T) not initialized. Consider calling with `with_scoped`."
     _ref[]
 end

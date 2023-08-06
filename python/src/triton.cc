@@ -554,13 +554,13 @@ void init_triton_ir(py::module &&m) {
              return self.getArgument(idx);
            })
       .def(
-          "add_entry_block",
+          "add_entry_block!",
           [](mlir::triton::FuncOp &self) -> mlir::Block * {
             return self.addEntryBlock();
           },
           ret::reference)
       .def(
-          "set_arg_attr",
+          "set_arg_attr!",
           [](mlir::triton::FuncOp &self, int arg_no, const std::string &name,
              int val) {
             // set arg attributes "name" to value "val"
@@ -568,7 +568,7 @@ void init_triton_ir(py::module &&m) {
             self.setArgAttr(arg_no, name, mlir::IntegerAttr::get(attrTy, val));
           },
           ret::reference)
-      .def("finalize",
+      .def("finalize!",
            [](mlir::triton::FuncOp &self) -> void {
              // Remove dead code
              // 1. Unreachable code after return

@@ -4,6 +4,19 @@ using StructEquality
 using InteractiveUtils: subtypes
 
 
+macro wbc(expr)
+    quote
+        let ctx = CppTriton.MLIRContext()
+            CppTriton.load_triton!(ctx)
+            builder = CppTriton.TritonOpBuilder(CppTriton.CxxWrap.CxxPtr(ctx))
+            set_builder_ref(builder)
+            res = $expr
+            set_builder_ref(nothing)
+            res
+        end
+    end
+end
+
 macro wc(expr)
     quote
         let ctx = CppTriton.MLIRContext()

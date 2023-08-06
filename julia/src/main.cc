@@ -1119,7 +1119,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            else
       //              throw std::runtime_error("Not implemented");
       //          })
-      .method("get_null_value",
+      .method("get_null_value!",
               [](TritonOpBuilder &self, mlir::Type type) -> mlir::Value {
                 if (auto floatTy = type.dyn_cast<mlir::FloatType>())
                   return self.create<mlir::arith::ConstantFloatOp>(
@@ -1138,7 +1138,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            else
       //              throw std::runtime_error("Not implemented");
       //          })
-      .method("get_all_ones_value",
+      .method("get_all_ones_value!",
               [](TritonOpBuilder &self, mlir::Type type) -> mlir::Value {
                 uint64_t val = 0xFFFFFFFFFFFFFFFF;
                 if (auto intTy = type.dyn_cast<mlir::IntegerType>())

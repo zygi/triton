@@ -398,8 +398,6 @@ end
 @test @wcok num_programs(builder, 1)
 
 
-# for now, let's have no implicit casting
-
 split_arg(e) = @match e begin
     Expr(:(::), name, Tsym) => (name, Tsym) 
     x => begin @show x.head; throw("Binary op must take two tensors") end
@@ -483,10 +481,10 @@ end
 @test_throws "" @wc Tensor(builder, 1.0) + Tensor(builder, 2)
 @test_throws "" @wc Tensor(builder, 1.0) + full(builder, [2,], 2.0, Tfloat64)
 
-@with_scoped_builder Base.zero(builder, ty::TritonType) = Tensor(builder, CT.get_null_value(builder, construct_ir_type(builder, ty)), ty)
+@with_scoped_builder Base.zero(builder, ty::TritonType) = Tensor(builder, CT.get_null_value!(builder, construct_ir_type(builder, ty)), ty)
 @test @wcok zero(builder, Tint32)
 
-@with_scoped_builder triton_all_ones(builder, ty) = Tensor(builder, CT.get_all_ones_value(builder, construct_ir_type(builder, ty)), ty)
+@with_scoped_builder triton_all_ones(builder, ty) = Tensor(builder, CT.get_all_ones_value!(builder, construct_ir_type(builder, ty)), ty)
 @test @wcok triton_all_ones(builder, Tint32)
 
 @with_scoped_builder Base.one(builder, ty::TritonType) = @match ty begin
@@ -878,7 +876,7 @@ end
 end
 
 
-dot(x::Tensor, y::Tensor; allow_tf32 = true) = begin
+dot(x::Tensor, y::Tensor; allow_tf32 = true, output_ty=Tfp32) = begin
     @assert is_block(x.type) && is_block(y.type) "x and y must be block tensors, got $x and $y"
     @assert base_scalar_type(x.type) == base_scalar_type(y.type) "x and y must have the same type, got $x and $y"
     @assert length(size(x)) == 2 && length(size(y)) == 2 "x and y must be 2D tensors, got $x and $y"
@@ -888,8 +886,7 @@ dot(x::Tensor, y::Tensor; allow_tf32 = true) = begin
     accum_type = @match base_scalar_type(x.type), base_scalar_type(y.type) begin
         (Tfp32, _) => Tfp32
         (Tbf16, _) => Tfp32
-        (_, Tfp16) => Tfp16
-        (_, _) => Tfp32
+        (_, _) => output_ty
     end
     accum = zero(x.builder, accum_type)
     M = size(x, 1)
