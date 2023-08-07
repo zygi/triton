@@ -1,3 +1,11 @@
+_assert_has_enough_shmem(required) = begin
+    # shared_total = CUDA.attribute(CUDA.device(), CUDA.CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR)
+    shared_total = attribute(CUDA.device(), CUDA.CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN)
+    if required > shared_total
+        throw(InsufficientSharedMemoryError(required, shared_total))
+    end
+end
+
 inline_triton_ir!(mod, ctx) = begin
     pm = CT.PassManager(CT.CxxPtr(ctx))
     CT.enable_debug!(pm)
@@ -49,7 +57,7 @@ get_cc_numeric() = begin
         cap = CUDA.capability(CUDA.device())
         return cap.major * 10 + cap.minor
     else
-        return 0
+        return nothing
     end
 end
 
@@ -67,9 +75,9 @@ optimize_ttgir!(mod, ctx, num_stages, arch) = begin
     CT.add_tritongpu_coalesce_pass!(pm)
     CT.add_tritongpu_remove_layout_conversions_pass!(pm)
     # if isa(arch, Int)
-
-    CT.add_tritongpu_accelerate_matmul_pass!(pm, arch)
-    # end
+    if !isnothing(arch)
+        CT.add_tritongpu_accelerate_matmul_pass!(pm, arch)
+    end
     CT.add_tritongpu_remove_layout_conversions_pass!(pm)
     CT.add_tritongpu_optimize_dot_operands_pass!(pm)
     CT.add_tritongpu_pipeline_pass!(pm, num_stages)
@@ -207,25 +215,30 @@ function link(compiled)
     CuFunction(mod, compiled.entry)
 end
 
+_module_cache_key(mod, arch, num_blocks, num_warps) = begin
+    mlir_ast_string = String(CT.string(mod))
+    "$mlir_ast_string\n$arch\n$num_blocks\n$num_warps"
+end
+
 const mlir_to_cubin_cache = Cache(String, FileSystemCacheManager("/tmp/juliatriton_cache", Any),
-x -> replace(base64encode(sha512(x)), '/' => '_', '=' => '_', '+' => '_')
+    x -> replace(base64encode(sha512(x)), '/' => '_', '=' => '_', '+' => '_')
 )
 
-using Serialization
-function compile_module!(mod, ctx, arch::Integer, entry::AbstractString;
-        num_stages=3, num_warps=32, print_opt_ttir=false, print_opt_ttgir=false, print_final_llir=false, print_final_ptx=false, bypass_cache=true)
-    mlir_ast_string = String(CT.string(mod))
+# sha512(OrderedDict([:a => 1, :b => "asdf"]))
 
-    compiled, recommended_shared_memory = if !bypass_cache && haskey(mlir_to_cubin_cache, mlir_ast_string)
-        @info "Using cached compilation result"
-        mlir_to_cubin_cache[mlir_ast_string]
+
+using Serialization
+function compile_module!(mod, ctx, arch::Union{Integer, Nothing}, entry::AbstractString;
+        num_stages=3, num_warps=32, print_opt_ttir=false, print_opt_ttgir=false, print_final_llir=false,
+        print_final_ptx=false, bypass_cache=false, assert_enough_shmem=false)
+    cache_key = _module_cache_key(mod, arch, num_stages, num_warps)
+    compiled, required_shared_memory = if !bypass_cache && haskey(mlir_to_cubin_cache, cache_key)
+        @info "Using cached kernel compilation result"
+        mlir_to_cubin_cache[cache_key]
     else
         inline_triton_ir!(mod, ctx)
         ttir_compute_capability_rewrite!(mod, ctx)
         rest_of_ttir_pass!(mod, ctx)
-        # if print_opt_ttir
-        #     @info "Optimized TTIR:\n" * CT.repr(mod)
-        # end
         if print_opt_ttir
             @info "Optimized TTIR:\n" * CT.repr(mod)
         end
@@ -251,7 +264,8 @@ function compile_module!(mod, ctx, arch::Integer, entry::AbstractString;
             @info "Final LLIR:\n" * llir
         end
     
-        recommended_shared_memory = CT.get_shared_memory_size(mod)
+        required_shared_memory = CT.get_shared_memory_size(mod)
+        assert_enough_shmem && _assert_has_enough_shmem(required_shared_memory)            
     
         ptx = llir_to_ptx!(llir, arch)
         if print_final_ptx && isinteractive()
@@ -263,17 +277,16 @@ function compile_module!(mod, ctx, arch::Integer, entry::AbstractString;
     
         compiled = ptx_compile(String(ptx), entry)
     
-        mlir_to_cubin_cache[mlir_ast_string] = (compiled, recommended_shared_memory)
-        compiled, recommended_shared_memory
+        mlir_to_cubin_cache[cache_key] = (compiled, required_shared_memory)
+        compiled, required_shared_memory
     end
 
     cufunction = link(compiled)
-    cufunction, recommended_shared_memory
+    cufunction, required_shared_memory
 end
 
-
 # Make arguments OrderedDict for debuggability
-compile_function(fn, arg_types::OrderedDict, val_args::OrderedDict; print_immediate_ttir=false, kwargs...) = begin
+compile_function(fn, arg_types::OrderedDict, val_args; print_immediate_ttir=false, kwargs...) = begin
     ctx = CppTriton.MLIRContext()
     CppTriton.load_triton!(ctx)
     builder = CppTriton.TritonOpBuilder(CppTriton.CxxWrap.CxxPtr(ctx))
@@ -288,7 +301,7 @@ compile_function(fn, arg_types::OrderedDict, val_args::OrderedDict; print_immedi
     CT.push_back!(mod, fn_op)
 
     entry = CT.add_entry_block!(fn_op)
-    insert_pt = CT.get_insertion_block(builder)
+    # insert_pt = CT.get_insertion_block(builder)
     CT.set_insertion_point_to_start!(builder, CT.CxxRef(entry))
     function_args = [CT.arg(CT.CxxRef(entry), i - 1) for i in 1:CT.get_num_arguments(entry)]
     arg_tensors = OrderedDict([arg_sym => Tensor(builder, arg_handle, arg_type) for (arg_handle, (arg_sym, arg_type)) in zip(function_args, arg_types)])
@@ -301,7 +314,7 @@ compile_function(fn, arg_types::OrderedDict, val_args::OrderedDict; print_immedi
 
     # @show decls
 
-    with_scoped(builder) do; fn(; arg_tensors..., val_args...) end
+    with_scoped(builder) do; fn(; pairs(arg_tensors)..., pairs(val_args)...) end
     # with_scoped(builder) do; fn(arg_tensors..., values(val_args)...) end
     # fn(builder, arg_tensors..., (Tensor(builder, a) for a in val_args)...)
 
@@ -314,49 +327,31 @@ compile_function(fn, arg_types::OrderedDict, val_args::OrderedDict; print_immedi
 end
 
 
-triton_type_to_julia_ctype(x::ScalarTritonType) = @match x begin
-    # Tvoid 
-    Tint1 => Cuchar
-    Tint8 => Cuchar
-    Tuint8 => Cuchar
-    Tint16 => Cshort
-    Tuint16 => Cushort
-    Tint32 => Cint
-    Tuint32 => Cuint
-    Tint64 => Clonglong
-    Tuint64 => Culonglong
-    # Tfp8e5  => UInt8
-    # Tfp8e4  => Float16
-    # Tfp8e4b15 => Float16
-    Tfp16 => Cushort # maybe? idk
-    # Tbf16 
-    Tfp32 => Cfloat
-    Tfp64 => Cdouble
-end
-triton_type_to_julia_ctype(x::PointerTritonType) = CuPtr{triton_type_to_julia_ctype(x.scalar)}
+# triton_type_to_julia_ctype(x::ScalarTritonType) = @match x begin
+#     # Tvoid 
+#     Tint1 => Cuchar
+#     Tint8 => Cuchar
+#     Tuint8 => Cuchar
+#     Tint16 => Cshort
+#     Tuint16 => Cushort
+#     Tint32 => Cint
+#     Tuint32 => Cuint
+#     Tint64 => Clonglong
+#     Tuint64 => Culonglong
+#     # Tfp8e5  => UInt8
+#     # Tfp8e4  => Float16
+#     # Tfp8e4b15 => Float16
+#     Tfp16 => Cushort # maybe? idk
+#     # Tbf16 
+#     Tfp32 => Cfloat
+#     Tfp64 => Cdouble
+# end
+# triton_type_to_julia_ctype(x::PointerTritonType) = CuPtr{triton_type_to_julia_ctype(x.scalar)}
 
 
 
-triton_type_to_julia_type(x::ScalarTritonType) = @match x begin
-    # Tvoid 
-    Tint1 => Bool
-    Tint8 => Int8
-    Tuint8 => UInt8
-    Tint16 => Int16
-    Tuint16 => UInt16
-    Tint32 => Int32
-    Tuint32 => UInt32
-    Tint64 => Int64
-    Tuint64 => UInt64
-    # Tfp8e5  => UInt8
-    # Tfp8e4  => Float16
-    # Tfp8e4b15 => Float16
-    Tfp16 => Float16 # maybe? idk
-    # Tbf16 
-    Tfp32 => Float32
-    Tfp64 => Float64
-end
-triton_type_to_julia_type(x::PointerTritonType) = CuPtr{triton_type_to_julia_type(x.scalar)}
+triton_type_to_julia_type(::Type{TritonSimpleType{T}}) where T = T
+triton_type_to_julia_type(::Type{TritonPointerType{TritonSimpleType{T}}}) where T = CuPtr{T}
 
 struct TritonKernel{F, M, FF}
     fun::F
@@ -368,35 +363,39 @@ struct TritonKernel{F, M, FF}
     num_blocks_fn::FF    
 end
 
+struct InsufficientSharedMemoryError <: Exception
+    required::Int
+    available::Int
+end
+Base.showerror(io::IO, e::InsufficientSharedMemoryError) = print(io, "The kernel requires $(e.required) bytes of dynamic shared memory, but only $(e.available) bytes are available. Adjust your kernel or compilation parameters.")
+
 
 TritonKernel(fun::F,dynamic_argument_typedict, required_dyn_shmem, num_warps, metadata::M, num_blocks_fn::FF) where {F, M, FF} = begin
-    # required_dyn_shmem = 49152
-    shared_total = CUDA.attribute(CUDA.device(), CUDA.CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR)
-    if required_dyn_shmem > shared_total
-        throw("The kernel requires $required_dyn_shmem bytes of dynamic shared memory, but only $shared_total bytes are available. Adjust your kernel or compilation parameters.")
-    end
+    _assert_has_enough_shmem(required_dyn_shmem)
 
-    shared_optin_max = attribute(CUDA.device(), CUDA.CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN)
-    if (required_dyn_shmem > 49152 && shared_optin_max > 49152)
-        CUDA.cuFuncSetCacheConfig(fun, CUDA.CU_FUNC_CACHE_PREFER_SHARED)
-        # shared_total = attribute(CUDA.device(), CUDA.CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR)
-        shared_static = attributes(fun)[CUDA.CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES]
-        attributes(fun)[CUDA.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES] = shared_optin_max - shared_static
-        # int shared_total, shared_static;
-        # CUDA_CHECK(cuDeviceGetAttribute(
-        #     &shared_total, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR,
-        #     device));
-        # CUDA_CHECK(cuFuncGetAttribute(&shared_static,
-        #                               CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, fun));
-        # CUDA_CHECK(
-            # cuFuncSetAttribute(fun, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
-            #                    shared_optin - shared_static));
-    end
+    # TODO the below is copied over from triton, I should think harder about whether it actually makes sense
+    # shared_optin_max = attribute(CUDA.device(), CUDA.CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN)
+    # if (required_dyn_shmem > 49152 && shared_optin_max > 49152)
+    #     CUDA.cuFuncSetCacheConfig(fun, CUDA.CU_FUNC_CACHE_PREFER_SHARED)
+    #     # shared_total = attribute(CUDA.device(), CUDA.CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR)
+    #     shared_static = attributes(fun)[CUDA.CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES]
+    #     attributes(fun)[CUDA.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES] = shared_optin_max - shared_static
+    #     # int shared_total, shared_static;
+    #     # CUDA_CHECK(cuDeviceGetAttribute(
+    #     #     &shared_total, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR,
+    #     #     device));
+    #     # CUDA_CHECK(cuFuncGetAttribute(&shared_static,
+    #     #                               CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, fun));
+    #     # CUDA_CHECK(
+    #         # cuFuncSetAttribute(fun, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+    #         #                    shared_optin - shared_static));
+    # end
     
     dynarg_types = [triton_type_to_julia_type(x) for x in values(dynamic_argument_typedict)]
     attributes(fun)[CUDA.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES] = required_dyn_shmem
 
     # check mapping, I wonder if we can do this statically
+    
     num_blocks_fn_ret_type = Base.return_types(num_blocks_fn, (eltype(dynarg_types), M))
     @assert !isempty(num_blocks_fn_ret_type) "TODO num_blocks_fn must return Int64, instead got $num_blocks_fn_ret_type"
 
@@ -412,18 +411,25 @@ _convert_to_callarg(::Type{T}, x) where T = convert(T, x)
 
 
 # NamedTuple{(:a, :b)}((1, "")) |> flatten
+# NamedTuple{(:a, :b)}((1,"")) |> values
 
 
-struct ConfigParams
+# struct ConfigParams{T <: NamedTuple}
+#     num_warps::Int
+#     num_stages::Int
+#     static_args::T
+# end
+
+struct ConfigParams{T}
     num_warps::Int
     num_stages::Int
-    static_args::OrderedDict{Symbol, Any}
+    static_args::OrderedDict{Symbol, T}
 end
 # @functor ConfigParams
-ConfigParams(;num_warps, num_stages, static_args) = ConfigParams(num_warps, num_stages, static_args)
-flatten(p::ConfigParams, spec) = [p.num_warps, p.num_stages, values(p.static_args)...]
-
-cp = ConfigParams(1, 2, OrderedDict(:a => 1, :b => 2))
+# ConfigParams(;num_warps, num_stages, static_args::T) where {T <: NamedTuple} = ConfigParams{T}(num_warps, num_stages, static_args)
+ConfigParams(num_warps, num_stages, static_args::OrderedDict{Symbol, T}) where {T} = ConfigParams{T}(num_warps, num_stages, static_args)
+ConfigParams(;num_warps, num_stages, static_args::OrderedDict{Symbol, T}) where {T} = ConfigParams{T}(num_warps, num_stages, static_args)
+flatten(p::ConfigParams) = [p.num_warps, p.num_stages, values(p.static_args)...]
 
 function (kernel::TritonKernel)(args...; threads::CuDim=(32*kernel.num_warps), blocks::Union{CuDim, Nothing}=nothing)
     @assert length(args) == length(kernel.dynarg_types)
@@ -442,9 +448,9 @@ function (kernel::TritonKernel)(args...; threads::CuDim=(32*kernel.num_warps), b
 end 
 
 
-function compile_triton_kernel(kernel_fn, dynamic_argument_types, static_arg_values, grid_fn; num_warps=4, kwargs...)
-    cufun, _, shmem = compile_function(kernel_fn, dynamic_argument_types, static_arg_values; num_warps, kwargs...)
-    TritonKernel(cufun, dynamic_argument_types, shmem, num_warps, static_arg_values, grid_fn)
+function compile_triton_kernel(kernel_fn, dynamic_argument_types, static_arg_assigments, grid_fn; num_warps=4, kwargs...)
+    cufun, _, shmem = compile_function(kernel_fn, dynamic_argument_types, static_arg_assigments; num_warps, kwargs...)
+    TritonKernel(cufun, dynamic_argument_types, shmem, num_warps, static_arg_assigments, grid_fn)
 end
 
 compile_triton_kernel(kernel_fn, dynamic_argument_types, config_params::ConfigParams, grid_fn; kwargs...) = 

@@ -14,105 +14,62 @@ const CT = CppTriton
 
 include("cache.jl")
 include("global_implicit.jl")
-include("helpers.jl")
-include("tensor_ops.jl")
+# include("helpers.jl")
+# include("tensor_ops.jl")
+include("typed_types.jl")
 include("compilation.jl")
 include("ops.jl")
 include("autotune.jl")
+include("overrides/CUBLAS.jl")
 
 ##
 
-# [v for (k, v) in OrderedDict([:a => 1, :b => 2, :c => 3])]
-
-# Int64(-1)
-
-test_kernel(; in_ptr::Tensor, out_ptr::Tensor, n::Tensor, extra_increment::Int32) = begin
-    pid = program_id(1)
-    my_ptr = in_ptr + pid
-
-    # @show broadcast_impl_shape(Tensor(bd, Int64(1)), [8,])
-    # device_print(bd, "test ", expanddims(arange(bd, 0, 4), 1) + expanddims(arange(bd, 0, 4), 2))
-    # device_print(bd, "test ", Tensor(bd, Int64(5)) + broadcast_impl_shape(Tensor(bd, Int64(1)), [8,]))
-
-    # device_print(bd, "test ", cdiv(Tensor(bd, 256), Tensor(bd, 64)))
-    # device_print(bd, "test ", Tensor(bd, Int64(5)) - Tensor(bd, Int64(1)))
-    # device_print(bd, "test2 ", (Tensor(bd, Int64(-1)) < Tensor(bd, Int64(0))) - Tensor(bd, true))
-    # device_print(bd, "test2 ", Tensor(bd, CT.get_int1(bd, true), Tint1))
-    # device_print(bd, "test2 ", Tensor(bd, true))
-    # device_print(bd, "test2 ", one(bd, Tint64))
-    # @show construct_ir_type(bd, Tint64)
-
-    # device_print(bd, "test2 ", Tensor(bd, CT.get_all_ones_value(bd, construct_ir_type(bd, Tint64)), Tint64))
-    # device_print(bd, "test2 ", Tensor(bd, Int64(1)))
-    # one(builder, Tint64)
-    # device_print(bd, "test3 ", Tensor(bd, CppTriton.get_int64(bd, -1), Tint64))
-    
-    accum = zero(Tint32)
-    accum2 = zero(Tint32)
-    (final_accum, accum2) = triton_for!(Int32(0), Int32(5), Int32(1), accum, accum2) do i, accum, accum2
-        in = load(my_ptr; mask=Tensor(true), other=Tensor(0.0f0))
-        return (accum + i + Tensor(extra_increment), accum2) #+ Tensor(bd, EXTRA_INCREMENT) #+ cast(in, Tint64)
-    end
-
-    store(out_ptr + pid, cast(final_accum, Tfp32))
-    triton_return()
-end
-
-arg_types = OrderedDict([:in_ptr => PointerTritonType(Tfp32), :out_ptr => PointerTritonType(Tfp32), :n => Tint32])
-template_vals = OrderedDict([:extra_increment => Int32(1)])
+# include("test/test_simple_kernel_e2e.jl")
 
 
-# shmem
-
-@test begin
-    test_a = CUDA.ones(Float32, 64)
-    test_out = CUDA.zeros(Float32, 64)
-    kernel = compile_triton_kernel(test_kernel, arg_types, template_vals, (_, _) -> prod(size(test_a));
-    # print_immediate_ttir=true, print_opt_ttir=true)
-    )
-
-    kernel(test_a, test_out, 64)
-    test_out ≈ 15 .* test_a
-end
+DATA_TYPE = TrFloat16
 
 
-
-DATA_TYPE = Tfp16
 # DATA_TYPE = Tfp16
 dynamic_argument_types = OrderedDict([
-    :a_ptr => PointerTritonType(DATA_TYPE),
-    :b_ptr => PointerTritonType(DATA_TYPE),
-    :c_ptr => PointerTritonType(DATA_TYPE),
-    :M => Tint32,
-    :N => Tint32,
-    :K => Tint32,
-    :stride_ak => Tint32,
-    :stride_bn => Tint32,
-    :stride_cn => Tint32,
-    # :stride_am => Tint32,
-    # :stride_bk => Tint32,
-    # :stride_cm => Tint32,
+    :a_ptr => TritonPointerType{DATA_TYPE},
+    :b_ptr => TritonPointerType{DATA_TYPE},
+    :c_ptr => TritonPointerType{DATA_TYPE},
+    :M => TrInt32,
+    :N => TrInt32,
+    :K => TrInt32,
+    :stride_ak => TrInt32,
+    :stride_bn => TrInt32,
+    :stride_cn => TrInt32,
+    # :stride_am => TrInt32,
+    # :stride_bk => TrInt32,
+    # :stride_cm => TrInt32,
 ])
 
-static_arg_values = OrderedDict([k => Int32(v) for (k, v) in 
-[
-    :stride_am => 1,
-    :stride_bk => 1, 
-    :stride_cm => 1,
-    # :stride_ak => 1,
-    # :stride_bn => 1, 
-    # :stride_cn => 1,
-    :BLOCK_SIZE_M => 128,
-    :BLOCK_SIZE_N => 64,
-    :BLOCK_SIZE_K => 32,
-    :GROUP_SIZE_M => 8,
-]])
+# static_arg_values = OrderedDict([k => Int32(v) for (k, v) in 
+# [
+#     :stride_am => 1,
+#     :stride_bk => 1, 
+#     :stride_cm => 1,
+#     # :stride_ak => 1,
+#     # :stride_bn => 1, 
+#     # :stride_cn => 1,
+#     :BLOCK_SIZE_M => 128,
+#     :BLOCK_SIZE_N => 64,
+#     :BLOCK_SIZE_K => 32,
+#     :GROUP_SIZE_M => 8,
+# ]])
+
+
+static_arg_values = OrderedDict([:BLOCK_SIZE_K => Int32(32), :stride_am => Int32(1), :stride_bk => Int32(1), :stride_cm => Int32(1), :BLOCK_SIZE_M => Int32(256), :GROUP_SIZE_M => Int32(4), :BLOCK_SIZE_N => Int32(128)])
 
 config_params = ConfigParams(
     8,
     4,
     static_arg_values
 )
+
+# config_params = ConfigParams(4, 4, OrderedDict{Symbol, Int32}(:stride_am => 1, :stride_bk => 1, :stride_cm => 1, :BLOCK_SIZE_M => 64, :BLOCK_SIZE_N => 128, :BLOCK_SIZE_K => 64, :GROUP_SIZE_M => 4))
 
 matmul_kernel(; # note: all of these are kwargs
     a_ptr, b_ptr, c_ptr,
@@ -143,11 +100,11 @@ matmul_kernel(; # note: all of these are kwargs
     offs_k = arange(0, BLOCK_SIZE_K)
     a_ptrs = a_ptr + (expanddims(offs_am, 2) * stride_am + expanddims(offs_k, 1) * stride_ak)
     b_ptrs = b_ptr + (expanddims(offs_k, 2) * stride_bk + expanddims(offs_bn, 1) * stride_bn)
-    accumulator = zeros(Tfp32, [BLOCK_SIZE_M, BLOCK_SIZE_N])
+    accumulator = zeros(TrFloat32, [BLOCK_SIZE_M, BLOCK_SIZE_N])
     
     (accumulator, a_ptrs, b_ptrs) =
         # control flow functional for now
-        triton_for!(Tensor(Int32(0)), cdiv(K, Tensor(BLOCK_SIZE_K)), Tensor(Int32(1)), 
+        triton_for!(Int32(0), cdiv(K, Tensor(BLOCK_SIZE_K)), Int32(1), 
             accumulator, a_ptrs, b_ptrs) do k, accumulator, a_ptrs, b_ptrs
             a = load(a_ptrs; mask=expanddims(offs_k, 1) < K - k * BLOCK_SIZE_K, other=zero(DATA_TYPE))            
             b = load(b_ptrs; mask=expanddims(offs_k, 2) < K - k * BLOCK_SIZE_K, other=zero(DATA_TYPE))
@@ -169,74 +126,30 @@ matmul_kernel(; # note: all of these are kwargs
     triton_return()
 end
 
+grid_map_fn(dyn_args, static_args) = cdiv(dyn_args[:M], static_args[:BLOCK_SIZE_M]) * cdiv(dyn_args[:N], static_args[:BLOCK_SIZE_N])
 tk = compile_triton_kernel(matmul_kernel, dynamic_argument_types, config_params,
-    (dyn_args, static_args) -> cdiv(dyn_args[:M], static_args[:BLOCK_SIZE_M]) * cdiv(dyn_args[:N], static_args[:BLOCK_SIZE_N])
-    ;
-    # print_immediate_ttir=true,
+    grid_map_fn;
     print_opt_ttir=true,
-    # print_opt_ttgir=true,
-    
-    # print_final_llir=true
     )
-# tk.required_dyn_shmem = 49152
-# tk2 = compile_triton_kernel(matmul_kernel, dynamic_argument_types, static_arg_values,
-#     (dyn_args, static_args) -> cdiv(dyn_args[:M], static_args[:BLOCK_SIZE_M]) * cdiv(dyn_args[:N], static_args[:BLOCK_SIZE_N])
-#     ; num_warps=8,
-#     num_stages=4)
 
+triton_matmul!(out, a, b) = tk(a, b, out, size(a, 1), size(b, 2), size(a, 2), stride(a, 2), stride(b, 2), stride(out, 2))
 
 SZ = 4096
-
-a = CUDA.rand(Float16, 4096, 4096)
-b = CUDA.rand(Float16, 4096, 4096)
+a = CUDA.randn(Float16, 4096, 4096)
+b = CUDA.randn(Float16, 4096, 4096)
 out = CUDA.zeros(Float16, 4096, 4096)
+out_blas = CUDA.zeros(Float16, 4096, 4096)
 
-@benchmark begin @CUDA.sync tk(a, b, out, SZ, SZ, SZ, SZ, SZ, SZ) end #setup=(a=CUDA.rand(Float16, SZ, SZ); b=CUDA.rand(Float16, SZ, SZ); out=CUDA.zeros(Float16,SZ, SZ))
+triton_matmul!(out, a, b)
+mul!(out_blas, a, b)
 
+@test out ≈ out_blas
 
-using Debugger
-Debugger.@enter mul!(out, a, b)
+@benchmark begin @CUDA.sync triton_matmul!(out, a, b) end #setup=(a=CUDA.rand(Float16, SZ, SZ); b=CUDA.rand(Float16, SZ, SZ); out=CUDA.zeros(Float16,SZ, SZ))
+@benchmark begin @CUDA.sync mul!(out, a, b) end #setup=(a=CUDA.rand(Float16, SZ, SZ); b=CUDA.rand(Float16, SZ, SZ); out=CUDA.zeros(Float16,SZ, SZ))
 
-# CUDA.math_mode!(CUDA.PEDANTIC_MATH)
-
-CUDA.CUBLAS.CUBLAS_MATH_DISALLOW_REDUCED_PRECISION_REDUCTION
-# CUDA.CUBLAS.CUBLAS_DEFAULT_MATH
-
-CUDA.CUBLAS.math_mode!(CUDA.CUBLAS.handle(), CUDA.DEFAULT_MATH)
-
-# CUDA.math_mode!(CUDA.DEFAULT_MATH)
-
-# CUDA.CUBLAS.cublasSetMathMode(CUDA.CUBLAS.handle(), CUDA.CUBLAS.CUBLAS_PEDANTIC_MATH)
-@benchmark begin @CUDA.sync mul!(out, a, b) end setup=(a=CUDA.rand(Float16, SZ, SZ); b=CUDA.rand(Float16, SZ, SZ); out=CUDA.zeros(Float16,SZ, SZ))
-
-tk(a, b, out, SZ, SZ, SZ, SZ, SZ, SZ)
-
-
-using LinearAlgebra
-LinearAlgebra.mul!(out, a, b)
-out - a * b
-# ,ID,API Name,Details,Func Return,Func Parameter,Start,Duration,Queued,Submitted
-# ,1634,cuLaunchKernel,,,"(0x81209b0, 4096, 1, 1, 256, 1, 1, 16384, 0x4c431c0, 0x7fc177a32940{0x7ffefb51fe20}, 0x0)",,,,
-
-# exit(0)
-
-tk.required_dyn_shmem
-
-static_arg_values
 
 tood(xs) = OrderedDict([k => Int32(v) for (k, v) in xs])
-
-# (num_warps = 8, num_stages = 4, static_args = tood([ 
-#     :stride_am => 1, :stride_bk => 1, :stride_cm => 1, :BLOCK_SIZE_M => 128, :BLOCK_SIZE_N => 128, :BLOCK_SIZE_K => 32, :GROUP_SIZE_M => 8, ]))
-
-# triton.Config({'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 256, 'BLOCK_SIZE_K': 64, 'GROUP_SIZE_M': 8}, num_stages=3, num_warps=8),
-# triton.Config({'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 256, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 8}, num_stages=4, num_warps=4),
-# triton.Config({'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 8}, num_stages=4, num_warps=4),
-# triton.Config({'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 64, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 8}, num_stages=4, num_warps=4),
-# triton.Config({'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 8}, num_stages=4, num_warps=4),
-# triton.Config({'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 32, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 8}, num_stages=4, num_warps=4),
-# triton.Config({'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 32, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 8}, num_stages=5, num_warps=2),
-# triton.Config({'BLOCK_SIZE_M': 32, 'BLOCK_SIZE_N': 64, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 8}, num_stages=5, num_warps=2),
 
 search_space = [
 ConfigParams(num_warps = 8, num_stages = 5, static_args = tood([
@@ -257,50 +170,48 @@ ConfigParams(num_warps = 8, num_stages = 4, static_args = tood([
     :stride_ak => 1, :stride_bn => 1, :stride_cn => 1, :BLOCK_SIZE_M => 64, :BLOCK_SIZE_N => 128, :BLOCK_SIZE_K => 32, :GROUP_SIZE_M => 8, ])),
 ]
 
-grid_map_fn(dyn_args, static_args) = cdiv(dyn_args[:M], static_args[:BLOCK_SIZE_M]) * cdiv(dyn_args[:N], static_args[:BLOCK_SIZE_N])
 
 bm_results = optimize(matmul_kernel, dynamic_argument_types, search_space, grid_map_fn)
 
 ##
 
 dynamic_argument_types = OrderedDict([
-    :a_ptr => PointerTritonType(DATA_TYPE),
-    :b_ptr => PointerTritonType(DATA_TYPE),
-    :c_ptr => PointerTritonType(DATA_TYPE),
-    :M => Tint32,
-    :N => Tint32,
-    :K => Tint32,
-    :stride_am => Tint32,
-    :stride_bk => Tint32,
-    :stride_cm => Tint32,
+    :a_ptr => TritonPointerType{DATA_TYPE},
+    :b_ptr => TritonPointerType{DATA_TYPE},
+    :c_ptr => TritonPointerType{DATA_TYPE},
+    :M => TrInt32,
+    :N => TrInt32,
+    :K => TrInt32,
+    :stride_ak => TrInt32,
+    :stride_bn => TrInt32,
+    :stride_cn => TrInt32,
 ])
 
 
 search_space = (
-    num_warps = Log2DiscreteSearchSpace(4, 16),
-    num_stages = LinearDiscreteSearchSpace(2e0, 5e0),
+    num_warps = Log2DiscreteSearchSpace(Int64, 4, 16),
+    num_stages = LinearDiscreteSearchSpace(Int64, 2e0, 5e0),
     static_args = OrderedDict([
-        :stride_ak => LinearDiscreteSearchSpace(1.0, 1.0),
-        :stride_bn => LinearDiscreteSearchSpace(1.0, 1.0),
-        :stride_cn => LinearDiscreteSearchSpace(1.0, 1.0),
+        :stride_am => LinearDiscreteSearchSpace(Int32, 1.0, 1.0),
+        :stride_bk => LinearDiscreteSearchSpace(Int32, 1.0, 1.0),
+        :stride_cm => LinearDiscreteSearchSpace(Int32, 1.0, 1.0),
 
         
-        :BLOCK_SIZE_M => Log2DiscreteSearchSpace(32, 256),
-        :BLOCK_SIZE_N => Log2DiscreteSearchSpace(32, 256),
-        :BLOCK_SIZE_K => Log2DiscreteSearchSpace(32, 256),
-        :GROUP_SIZE_M => Log2DiscreteSearchSpace(4, 8),
+        :BLOCK_SIZE_M => Log2DiscreteSearchSpace(Int32, 32, 256),
+        :BLOCK_SIZE_N => Log2DiscreteSearchSpace(Int32, 32, 256),
+        :BLOCK_SIZE_K => Log2DiscreteSearchSpace(Int32, 32, 256),
+        :GROUP_SIZE_M => Log2DiscreteSearchSpace(Int32, 4, 8),
     ])
 )
 
 
 # CUBLAS_MATH_DISALLOW_REDUCED_PRECISION_REDUCTION
 
-CUDA.math_mode()
 
 SZ = 4096
 const example_args2 = (
-    CUDA.rand(Float16, SZ, SZ),
-    CUDA.rand(Float16, SZ, SZ),
+    CUDA.randn(Float16, SZ, SZ),
+    CUDA.randn(Float16, SZ, SZ),
     CUDA.zeros(Float16, SZ, SZ),
     SZ, SZ, SZ, SZ, SZ, SZ
 )
@@ -308,11 +219,14 @@ const example_args2 = (
 # init_assignment = ConfigParams(num_warps = 8, num_stages = 5, static_args = tood([
 #     :stride_ak => 1, :stride_bn => 1, :stride_cn => 1, :BLOCK_SIZE_M => 64, :BLOCK_SIZE_N => 256, :BLOCK_SIZE_K => 32, :GROUP_SIZE_M => 8, ]))
 
-# init_assignment = ConfigParams(; num_warps = 8, num_stags = 5, static_args = OrderedDict{Symbol, Int32}(:BLOCK_SIZE_K => 32, :stride_am => 1, :stride_bk => 1, :stride_cm => 1, :BLOCK_SIZE_M => 64, :GROUP_SIZE_M => 8, :BLOCK_SIZE_N => 256))
+init_assignment = ConfigParams(8, 3, OrderedDict([:BLOCK_SIZE_K => Int32(32), :stride_am => Int32(1), :stride_bk => Int32(1), :stride_cm => Int32(1), :BLOCK_SIZE_M => Int32(256), :GROUP_SIZE_M => Int32(4), :BLOCK_SIZE_N => Int32(128)])
+)
 
-CUDA.versioninfo()
+using BlackBoxOptim
 
-optimize_bbo(matmul_kernel, dynamic_argument_types, search_space, example_args2, grid_map_fn)
+optimize_bbo(matmul_kernel, dynamic_argument_types, search_space, example_args2, grid_map_fn;
+init_assignment
+)
 
 bm_results = optimize(matmul_kernel, dynamic_argument_types, search_space, grid_map_fn)
 

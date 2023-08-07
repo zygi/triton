@@ -910,6 +910,8 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
   //          [](TritonOpBuilder &self, mlir::Operation &op) {
   //            self.setInsertionPointAfter(op);
   //          })
+
+  // To remind us that TritonOpBuilder is building a syntax tree we make all operations here mutable
   mod.add_type<TritonOpBuilder>("TritonOpBuilder")
       .constructor<mlir::MLIRContext *>()
       .method("create_module!",
@@ -935,7 +937,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //           return self.getBuilder().getInsertionBlock();
       //         },
       //         ret::reference)
-      .method("get_insertion_block",
+      .method("get_insertion_block!",
               [](TritonOpBuilder &self) -> mlir::Block * {
                 return self.getBuilder().getInsertionBlock();
               })
@@ -943,7 +945,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self) {
       //            return self.getBuilder().saveInsertionPoint();
       //          })
-      .method("get_insertion_point",
+      .method("get_insertion_point!",
               [](TritonOpBuilder &self) {
                 return self.getBuilder().saveInsertionPoint();
               })
@@ -960,7 +962,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self, bool value) {
       //            return self.getBuilder().getBoolAttr(value);
       //          })
-      .method("get_bool_attr",
+      .method("get_bool_attr!",
               [](TritonOpBuilder &self, bool value) {
                 return self.getBuilder().getBoolAttr(value);
               })
@@ -968,7 +970,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self, int32_t value) {
       //            return self.getBuilder().getI32IntegerAttr(value);
       //          })
-      .method("get_int32_attr",
+      .method("get_int32_attr!",
               [](TritonOpBuilder &self, int32_t value) {
                 return self.getBuilder().getI32IntegerAttr(value);
               })
@@ -979,7 +981,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
       //                v, self.getBuilder().getI1Type()));
       //          })
-      .method("get_int1",
+      .method("get_int1!",
               [](TritonOpBuilder &self, bool v) -> mlir::Value {
                 return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
                     v, self.getBuilder().getI1Type()));
@@ -989,7 +991,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
       //                v, self.getBuilder().getI8Type()));
       //          })
-      .method("get_int8",
+      .method("get_int8!",
               [](TritonOpBuilder &self, int64_t v) -> mlir::Value {
                 return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
                     v, self.getBuilder().getI8Type()));
@@ -999,7 +1001,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
       //                v, self.getBuilder().getI16Type()));
       //          })
-      .method("get_int16",
+      .method("get_int16!",
               [](TritonOpBuilder &self, int64_t v) -> mlir::Value {
                 return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
                     v, self.getBuilder().getI16Type()));
@@ -1009,7 +1011,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
       //                v, self.getBuilder().getI32Type()));
       //          })
-      .method("get_int32",
+      .method("get_int32!",
               [](TritonOpBuilder &self, int64_t v) -> mlir::Value {
                 return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
                     v, self.getBuilder().getI32Type()));
@@ -1019,7 +1021,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
       //                v, self.getBuilder().getI64Type()));
       //          })
-      .method("get_int64",
+      .method("get_int64!",
               [](TritonOpBuilder &self, int64_t v) -> mlir::Value {
                 return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
                     v, self.getBuilder().getI64Type()));
@@ -1029,7 +1031,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
       //                v, self.getBuilder().getI8Type()));
       //          })
-      .method("get_uint8",
+      .method("get_uint8!",
               [](TritonOpBuilder &self, uint64_t v) -> mlir::Value {
                 return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
                     v, self.getBuilder().getI8Type()));
@@ -1039,7 +1041,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
       //                v, self.getBuilder().getI16Type()));
       //          })
-      .method("get_uint16",
+      .method("get_uint16!",
               [](TritonOpBuilder &self, uint64_t v) -> mlir::Value {
                 return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
                     v, self.getBuilder().getI16Type()));
@@ -1049,7 +1051,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
       //                v, self.getBuilder().getI32Type()));
       //          })
-      .method("get_uint32",
+      .method("get_uint32!",
               [](TritonOpBuilder &self, uint64_t v) -> mlir::Value {
                 return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
                     v, self.getBuilder().getI32Type()));
@@ -1059,7 +1061,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
       //                v, self.getBuilder().getI64Type()));
       //          })
-      .method("get_uint64",
+      .method("get_uint64!",
               [](TritonOpBuilder &self, uint64_t v) -> mlir::Value {
                 return mlir::Value(self.create<mlir::arith::ConstantIntOp>(
                     v, self.getBuilder().getI64Type()));
@@ -1071,7 +1073,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //                mlir::APFloat(type.getFloatSemantics(),
       //                std::to_string(v)), type);
       //          })
-      .method("get_bf16",
+      .method("get_bf16!",
               [](TritonOpBuilder &self, float v) -> mlir::Value {
                 auto type = self.getBuilder().getBF16Type();
                 return self.create<mlir::arith::ConstantFloatOp>(
@@ -1083,7 +1085,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return self.create<mlir::arith::ConstantOp>(
       //                self.getBuilder().getF16FloatAttr(v));
       //          })
-      .method("get_fp16",
+      .method("get_fp16!",
               [](TritonOpBuilder &self, float v) -> mlir::Value {
                 return self.create<mlir::arith::ConstantOp>(
                     self.getBuilder().getF16FloatAttr(v));
@@ -1093,7 +1095,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return self.create<mlir::arith::ConstantOp>(
       //                self.getBuilder().getF32FloatAttr(v));
       //          })
-      .method("get_fp32",
+      .method("get_fp32!",
               [](TritonOpBuilder &self, float v) -> mlir::Value {
                 return self.create<mlir::arith::ConstantOp>(
                     self.getBuilder().getF32FloatAttr(v));
@@ -1103,7 +1105,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return self.create<mlir::arith::ConstantOp>(
       //                self.getBuilder().getF64FloatAttr(v));
       //          })
-      .method("get_fp64",
+      .method("get_fp64!",
               [](TritonOpBuilder &self, double v) -> mlir::Value {
                 return self.create<mlir::arith::ConstantOp>(
                     self.getBuilder().getF64FloatAttr(v));
@@ -1152,7 +1154,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self) -> mlir::Type {
       //            return self.getBuilder().getNoneType();
       //          })
-      .method("get_void_ty",
+      .method("get_void_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getNoneType();
               })
@@ -1160,7 +1162,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self) -> mlir::Type {
       //            return self.getBuilder().getI1Type();
       //          }) // or ret::copy?
-      .method("get_int1_ty",
+      .method("get_int1_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getI1Type();
               }) // or ret::copy?
@@ -1168,7 +1170,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
                  //          [](TritonOpBuilder &self) -> mlir::Type {
                  //            return self.getBuilder().getI8Type();
                  //          })
-      .method("get_int8_ty",
+      .method("get_int8_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getI8Type();
               })
@@ -1176,7 +1178,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self) -> mlir::Type {
       //            return self.getBuilder().getType<mlir::IntegerType>(16);
       //          })
-      .method("get_int16_ty",
+      .method("get_int16_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getType<mlir::IntegerType>(16);
               })
@@ -1184,7 +1186,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self) -> mlir::Type {
       //            return self.getBuilder().getI32Type();
       //          })
-      .method("get_int32_ty",
+      .method("get_int32_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getI32Type();
               })
@@ -1192,7 +1194,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self) -> mlir::Type {
       //            return self.getBuilder().getI64Type();
       //          })
-      .method("get_int64_ty",
+      .method("get_int64_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getI64Type();
               })
@@ -1201,7 +1203,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return
       //            self.getBuilder().getType<mlir::Float8E4M3FNUZType>();
       //          })
-      .method("get_fp8e4_ty",
+      .method("get_fp8e4_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getType<mlir::Float8E4M3FNUZType>();
               })
@@ -1213,7 +1215,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            ops return
       //            self.getBuilder().getType<mlir::Float8E4M3B11FNUZType>();
       //          })
-      .method("get_fp8e4b15_ty",
+      .method("get_fp8e4b15_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getType<mlir::Float8E4M3B11FNUZType>();
               })
@@ -1221,7 +1223,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self) -> mlir::Type {
       //            return self.getBuilder().getType<mlir::Float8E5M2Type>();
       //          })
-      .method("get_fp8e5_ty",
+      .method("get_fp8e5_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getType<mlir::Float8E5M2Type>();
               })
@@ -1229,7 +1231,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self) -> mlir::Type {
       //            return self.getBuilder().getF16Type();
       //          })
-      .method("get_half_ty",
+      .method("get_half_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getF16Type();
               })
@@ -1237,7 +1239,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self) -> mlir::Type {
       //            return self.getBuilder().getBF16Type();
       //          })
-      .method("get_bf16_ty",
+      .method("get_bf16_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getBF16Type();
               })
@@ -1245,7 +1247,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self) -> mlir::Type {
       //            return self.getBuilder().getF32Type();
       //          })
-      .method("get_float_ty",
+      .method("get_float_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getF32Type();
               })
@@ -1253,7 +1255,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //          [](TritonOpBuilder &self) -> mlir::Type {
       //            return self.getBuilder().getF64Type();
       //          })
-      .method("get_double_ty",
+      .method("get_double_ty!",
               [](TritonOpBuilder &self) -> mlir::Type {
                 return self.getBuilder().getF64Type();
               })
@@ -1262,7 +1264,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //             int addrSpace) -> mlir::Type {
       //            return mlir::triton::PointerType::get(type, addrSpace);
       //          })
-      .method("get_ptr_ty",
+      .method("get_ptr_ty!",
               [](TritonOpBuilder &self, mlir::Type &type,
                  int addrSpace) -> mlir::Type {
                 return mlir::triton::PointerType::get(type, addrSpace);
@@ -1272,7 +1274,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //             std::vector<int64_t> &shape) -> mlir::Type {
       //            return mlir::RankedTensorType::get(shape, elementType);
       //          })
-      .method("get_block_ty",
+      .method("get_block_ty!",
               [](TritonOpBuilder &self, mlir::Type &elementType,
                  const jlcxx::ArrayRef<int64_t> shape) -> mlir::Type {
                 const std::vector<int64_t> shape_vec(shape.begin(),
@@ -1285,7 +1287,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
       //            return self.getBuilder().getFunctionType(inTypes, outTypes);
       //          })
       .method(
-          "get_function_ty",
+          "get_function_ty!",
           [](TritonOpBuilder &self, const jlcxx::ArrayRef<mlir::Type> inTypes,
              const jlcxx::ArrayRef<mlir::Type> outTypes) -> mlir::Type {
             const std::vector<mlir::Type> inTypes_vec(inTypes.begin(),
@@ -3244,7 +3246,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
   //          const std::vector<std::string> &paths) {
   //         ::mlir::triton::addExternalLibs(op, names, paths);
   //       });
-  mod.method("add_external_libs",
+  mod.method("add_external_libs!",
              [](mlir::ModuleOp &op, const std::vector<std::string> &names,
                 const std::vector<std::string> &paths) {
                ::mlir::triton::addExternalLibs(op, names, paths);
@@ -3284,6 +3286,4 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
             *module, gfx_arch, gfx_triple, gfx_features);
         return hsacoCode;
       });
-
-  // mod.method("greet", &greet);
 }

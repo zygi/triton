@@ -27,20 +27,20 @@ Base.show(io::IO, x::Tensor) = begin
     
 end
 ##
-Tensor(builder, b::Bool) = Tensor(builder, CppTriton.get_int1(builder, b), Tint1)
-Tensor(builder, x::Int64) = Tensor(builder, CppTriton.get_int64(builder, x), Tint64)
-Tensor(builder, x::UInt64) = Tensor(builder, CppTriton.get_int64(builder, reinterpret(Int64, x)), Tuint64)
-Tensor(builder, x::Int32) = Tensor(builder, CppTriton.get_int32(builder, x), Tint32)
-Tensor(builder, x::UInt32) = Tensor(builder, CppTriton.get_int32(builder, reinterpret(Int32, x)), Tuint32)
+Tensor(builder, b::Bool) = Tensor(builder, CppTriton.get_int1!(builder, b), Tint1)
+Tensor(builder, x::Int64) = Tensor(builder, CppTriton.get_int64!(builder, x), Tint64)
+Tensor(builder, x::UInt64) = Tensor(builder, CppTriton.get_int64!(builder, reinterpret(Int64, x)), Tuint64)
+Tensor(builder, x::Int32) = Tensor(builder, CppTriton.get_int32!(builder, x), Tint32)
+Tensor(builder, x::UInt32) = Tensor(builder, CppTriton.get_int32!(builder, reinterpret(Int32, x)), Tuint32)
 
 @test @wcok Tensor(builder, Int64(1))
 @test @wcok Tensor(builder, Int64(-2^63))
 @test @wcok Tensor(builder, Int64(2^63-1))
 @test @wcok Tensor(builder, typemax(UInt64))
 
-Tensor(builder, x::Float32) = Tensor(builder, CppTriton.get_fp32(builder, x), Tfp32)
-Tensor(builder, x::Float64) = Tensor(builder, CppTriton.get_fp64(builder, x), Tfp64)
-Tensor(builder, x::Float16) = Tensor(builder, CppTriton.get_fp16(builder, Float32(x)), Tfp16)
+Tensor(builder, x::Float32) = Tensor(builder, CppTriton.get_fp32!(builder, x), Tfp32)
+Tensor(builder, x::Float64) = Tensor(builder, CppTriton.get_fp64!(builder, x), Tfp64)
+Tensor(builder, x::Float16) = Tensor(builder, CppTriton.get_fp16!(builder, Float32(x)), Tfp16)
 
 
 IntoTensor = Union{Bool, Int64, UInt64, Int32, UInt32, Float32, Float64, Float16, Tensor}

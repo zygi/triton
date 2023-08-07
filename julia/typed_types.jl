@@ -1,9 +1,9 @@
-include("TritonCxxWrap.jl")
-const CT = CppTriton
+# include("TritonCxxWrap.jl")
+# const CT = CppTriton
 ##
 include("global_implicit.jl")
 using Test
-
+using BFloat16s
 
 macro wbc(expr)
     quote
@@ -86,7 +86,12 @@ const TritonTypeable = Union{
 
 abstract type TritonSimpleType{T <: TritonTypeable} <: TritonType end
 abstract type TritonPointerType{T <: TritonType} <: TritonType end
+
+# TODO write note about how constructing tuples with Int32 etc can lead to very confusing and undebuggable errors
 abstract type TritonBlockType{Size <: Tuple, T <: TritonType} <: TritonType end
+
+# Arrgh I shouldn't need to do this, hopefully it won't bite me in the butt later
+# Base.:==(::Type{<:}, ::Type{<:TritonType}) = true
 
 const TrNothing = TritonSimpleType{Nothing}
 const TrBool = TritonSimpleType{Bool}
@@ -107,7 +112,7 @@ const TritonSimpleTypes = Union{TrNothing, TrBool, TrInt8, TrUInt8, TrInt16, TrU
 const TritonScalarTypes = Union{TritonSimpleTypes, TritonPointerType}
 
 dimtuple_to_vec(::Type{Tuple{}}) = Int64[]
-dimtuple_to_vec(::Type{X}) where {X <: Tuple} = collect(Int64, fieldtypes(X))
+dimtuple_to_vec(::Type{X}) where {X <: Tuple} = collect(fieldtypes(X))
 
 # Helper functions
 Base.size(::Type{TritonBlockType{Size, T}}) where {Size <: Tuple, T <: TritonType} = dimtuple_to_vec(Size)
@@ -115,24 +120,35 @@ Base.size(::Type{T}) where {T <: TritonType} = Int64[]
 
 numel(::Type{T}) where {T <: TritonType} = prod(size(T))
  
+# Can I do this generically? Or more importantly, should I?
+_build_tuple_type(::Val{T}) where T = Tuple{T}
+_build_tuple_type(::Val{T}, ::Val{U}) where {T, U} = Tuple{T, U}
+_build_tuple_type(::Val{T}, ::Val{U}, ::Val{V}) where {T, U, V} = Tuple{T, U, V}
+_build_tuple_type(::Val{T}, ::Val{U}, ::Val{V}, ::Val{W}) where {T, U, V, W} = Tuple{T, U, V, W}
 
-construct_ir_type(builder, ::Type{TrNothing}) = CppTriton.get_void_ty(builder)
-construct_ir_type(builder, ::Type{TrBool}) = CppTriton.get_int1_ty(builder)
-construct_ir_type(builder, ::Type{TrInt8}) = CppTriton.get_int8_ty(builder)
-construct_ir_type(builder, ::Type{TrUInt8}) = CppTriton.get_int8_ty(builder)
-construct_ir_type(builder, ::Type{TrInt16}) = CppTriton.get_int16_ty(builder)
-construct_ir_type(builder, ::Type{TrUInt16}) = CppTriton.get_int16_ty(builder)
-construct_ir_type(builder, ::Type{TrInt32}) = CppTriton.get_int32_ty(builder)
-construct_ir_type(builder, ::Type{TrUInt32}) = CppTriton.get_int32_ty(builder)
-construct_ir_type(builder, ::Type{TrInt64}) = CppTriton.get_int64_ty(builder)
-construct_ir_type(builder, ::Type{TrUInt64}) = CppTriton.get_int64_ty(builder)
-construct_ir_type(builder, ::Type{TrBFloat16}) = CppTriton.get_bf16_ty(builder)
-construct_ir_type(builder, ::Type{TrFloat16}) = CppTriton.get_half_ty(builder)
-construct_ir_type(builder, ::Type{TrFloat32}) = CppTriton.get_float_ty(builder)
-construct_ir_type(builder, ::Type{TrFloat64}) = CppTriton.get_double_ty(builder)
+vec_to_dimtuple(xs) = _build_tuple_type(Val.(collect(Int64, xs))...)
 
-construct_ir_type(builder, ::Type{TritonPointerType{T}}) where {T <: TritonType} = CppTriton.get_ptr_ty(builder, construct_ir_type(builder, T), 1)
-construct_ir_type(builder, ::Type{TritonBlockType{Size, T}}) where {Size <: Tuple, T <: TritonType} = CppTriton.get_block_ty(builder, construct_ir_type(builder, T), dimtuple_to_vec(Size))
+TritonBlockType(::Type{T}, dims...) where {T <: TritonType} = TritonBlockType{vec_to_dimtuple(dims), T}
+TritonBlockType(::Type{T}, dims) where {T <: TritonType} = TritonBlockType{vec_to_dimtuple(dims), T}
+
+
+construct_ir_type(builder, ::Type{TrNothing}) = CppTriton.get_void_ty!(builder)
+construct_ir_type(builder, ::Type{TrBool}) = CppTriton.get_int1_ty!(builder)
+construct_ir_type(builder, ::Type{TrInt8}) = CppTriton.get_int8_ty!(builder)
+construct_ir_type(builder, ::Type{TrUInt8}) = CppTriton.get_int8_ty!(builder)
+construct_ir_type(builder, ::Type{TrInt16}) = CppTriton.get_int16_ty!(builder)
+construct_ir_type(builder, ::Type{TrUInt16}) = CppTriton.get_int16_ty!(builder)
+construct_ir_type(builder, ::Type{TrInt32}) = CppTriton.get_int32_ty!(builder)
+construct_ir_type(builder, ::Type{TrUInt32}) = CppTriton.get_int32_ty!(builder)
+construct_ir_type(builder, ::Type{TrInt64}) = CppTriton.get_int64_ty!(builder)
+construct_ir_type(builder, ::Type{TrUInt64}) = CppTriton.get_int64_ty!(builder)
+construct_ir_type(builder, ::Type{TrBFloat16}) = CppTriton.get_bf16_ty!(builder)
+construct_ir_type(builder, ::Type{TrFloat16}) = CppTriton.get_half_ty!(builder)
+construct_ir_type(builder, ::Type{TrFloat32}) = CppTriton.get_float_ty!(builder)
+construct_ir_type(builder, ::Type{TrFloat64}) = CppTriton.get_double_ty!(builder)
+
+construct_ir_type(builder, ::Type{TritonPointerType{T}}) where {T <: TritonType} = CppTriton.get_ptr_ty!(builder, construct_ir_type(builder, T), 1)
+construct_ir_type(builder, ::Type{TritonBlockType{Size, T}}) where {Size <: Tuple, T <: TritonType} = CppTriton.get_block_ty!(builder, construct_ir_type(builder, T), dimtuple_to_vec(Size))
 
 construct_ir_type(::Type{T}) where {T <: TritonType} = construct_ir_type(get_builder_ref(), T)
 @test @wbc begin construct_ir_type(TrFloat32); true end
@@ -231,14 +247,6 @@ _parse_type_from_ptrscalar(x::AbstractString) = begin
 end
 @test _parse_type_from_ptrscalar("!tt.ptr<i32>") == TritonPointerType{TrUInt32}
 
-# Can I do this generically? Or more importantly, should I?
-_build_tuple_type(::Val{T}) where T = Tuple{T}
-_build_tuple_type(::Val{T}, ::Val{U}) where {T, U} = Tuple{T, U}
-_build_tuple_type(::Val{T}, ::Val{U}, ::Val{V}) where {T, U, V} = Tuple{T, U, V}
-_build_tuple_type(::Val{T}, ::Val{U}, ::Val{V}, ::Val{W}) where {T, U, V, W} = Tuple{T, U, V, W}
-
-to_tuple_type(xs) = _build_tuple_type(Val.(xs)...)
-
 _parse_type_from_repr(x::AbstractString) = begin
     if startswith(x, "tensor<")
         notensor = x[8:end-1]
@@ -248,8 +256,7 @@ _parse_type_from_repr(x::AbstractString) = begin
             TritonBlockType{Tuple{}, _parse_type_from_ptrscalar(parts[1]), Int64[]}
         else
             dims = parse.(Int64, parts[1:end-1])
-            dims_type = to_tuple_type(dims)
-            @show dims_type
+            dims_type = vec_to_dimtuple(dims)
             TritonBlockType{dims_type, _parse_type_from_ptrscalar(parts[end])}
         end
     else
@@ -259,6 +266,7 @@ end
 @test _parse_type_from_repr("tensor<1x2x3x!tt.ptr<i32>>") == TritonBlockType{Tuple{1, 2, 3}, TritonPointerType{TrUInt32}}
 
 
+# Tuple{1, 2} == vec_to_dimtuple([1, 2])
 
 # Now, SymTensors!
 struct Tensor{T <: TritonType}
@@ -286,21 +294,21 @@ Base.show(io::IO, x::Tensor) = begin
     print(io, "Tensor($hd)")
 end
 
-Tensor(builder, b::Bool) = Tensor(builder, CppTriton.get_int1(builder, b), TrBool)
-Tensor(builder, x::Int64) = Tensor(builder, CppTriton.get_int64(builder, x), TrInt64)
-Tensor(builder, x::UInt64) = Tensor(builder, CppTriton.get_int64(builder, reinterpret(Int64, x)), TrUInt64)
-Tensor(builder, x::Int32) = Tensor(builder, CppTriton.get_int32(builder, x), TrInt32)
-Tensor(builder, x::UInt32) = Tensor(builder, CppTriton.get_int32(builder, reinterpret(Int32, x)), TrUInt32)
+Tensor(builder, b::Bool) = Tensor(builder, CppTriton.get_int1!(builder, b), TrBool)
+Tensor(builder, x::Int64) = Tensor(builder, CppTriton.get_int64!(builder, x), TrInt64)
+Tensor(builder, x::UInt64) = Tensor(builder, CppTriton.get_int64!(builder, reinterpret(Int64, x)), TrUInt64)
+Tensor(builder, x::Int32) = Tensor(builder, CppTriton.get_int32!(builder, x), TrInt32)
+Tensor(builder, x::UInt32) = Tensor(builder, CppTriton.get_int32!(builder, reinterpret(Int32, x)), TrUInt32)
 
 @test @wcok Tensor(builder, Int64(1))
 @test @wcok Tensor(builder, Int64(-2^63))
 @test @wcok Tensor(builder, Int64(2^63-1))
 @test @wcok Tensor(builder, typemax(UInt64))
 
-Tensor(builder, x::Float32) = Tensor(builder, CppTriton.get_fp32(builder, x), TrFloat32)
-Tensor(builder, x::Float64) = Tensor(builder, CppTriton.get_fp64(builder, x), TrFloat64)
-Tensor(builder, x::Float16) = Tensor(builder, CppTriton.get_fp16(builder, Float32(x)), TrFloat16)
-# Tensor(builder, x::BFloat16) = Tensor(builder, CppTriton.get_fp16(builder, Float32(x)), TyFloat16)
+Tensor(builder, x::Float32) = Tensor(builder, CppTriton.get_fp32!(builder, x), TrFloat32)
+Tensor(builder, x::Float64) = Tensor(builder, CppTriton.get_fp64!(builder, x), TrFloat64)
+Tensor(builder, x::Float16) = Tensor(builder, CppTriton.get_fp16!(builder, Float32(x)), TrFloat16)
+Tensor(builder, x::BFloat16) = Tensor(builder, CppTriton.get_bf16!(builder, Float32(x)), TyBFloat16)
 
 IntoTensor = Union{Bool, Int64, UInt64, Int32, UInt32, Float32, Float64, Float16, Tensor}
 Tensor(x::IntoTensor) = begin Tensor(get_builder_ref(), x) end
@@ -379,19 +387,19 @@ cast(input::Tensor{T}, to::Type{U}) where {T, U<:TritonType} = begin
     end
 
     if is_pointer_bi(T_scalar) && is_pointer_bi(U_scalar)
-        return Tensor(CT.create_bit_cast!(builder, input.handle, construct_ir_type(U)), U)
+        return Tensor(CT.create_bitcast!(builder, input.handle, construct_ir_type(U)), U)
     end
 
     throw(ArgumentError("unsupported cast from $T to $U"))
 end
 @test @wbc begin cast(Tensor(5.0), TritonBlockType{Tuple{}, TrFloat64}); true end
-@test @wbc begin @show cast(Tensor(5), TrBool); true end
+@test @wbc begin cast(Tensor(5), TrBool); true end
 
 function arange(start::Integer, endd::Integer)
     start = Int32(start)
     endd = Int32(endd)
     shape = [endd - start,]
-    ret_ty = TritonBlockType{to_tuple_type(shape), TrInt32}
+    ret_ty = TritonBlockType{vec_to_dimtuple(shape), TrInt32}
     Tensor(CT.create_make_range!(get_builder_ref(), start, endd), ret_ty)
 end
 @test @wbc begin arange(0, 5); true end
@@ -399,7 +407,7 @@ end
 function full(dims::Tuple{Vararg{Int64}}, value::T) where {T <: IntoTensor}
     tens = Tensor(value)
     @assert numel(tens) == 1 "only scalar values are supported"
-    Tensor(get_builder_ref(), CT.create_splat!(get_builder_ref(), tens.handle, collect(dims)), TritonBlockType{to_tuple_type(dims), scalar_type_of(trtype(tens))})
+    Tensor(get_builder_ref(), CT.create_splat!(get_builder_ref(), tens.handle, collect(dims)), TritonBlockType{vec_to_dimtuple(dims), scalar_type_of(trtype(tens))})
 end
 @test @wbc begin full((2, 3), 5); true end
 
@@ -424,13 +432,13 @@ function triton_broadcast(lhs::Tensor{TritonBlockType{S1, T1}}, rhs::Tensor{Trit
         end
     end
     lhs = if lhs_dims != target_shape
-        Tensor(CT.create_broadcast!(builder, lhs.handle, collect(target_shape)), TritonBlockType{to_tuple_type(target_shape), T1})
+        Tensor(CT.create_broadcast!(builder, lhs.handle, collect(target_shape)), TritonBlockType{vec_to_dimtuple(target_shape), T1})
     else
         lhs
     end
 
     rhs = if rhs_dims != target_shape
-        Tensor(CT.create_broadcast!(builder, rhs.handle, collect(target_shape)), TritonBlockType{to_tuple_type(target_shape), T2})
+        Tensor(CT.create_broadcast!(builder, rhs.handle, collect(target_shape)), TritonBlockType{vec_to_dimtuple(target_shape), T2})
     else
         rhs
     end
@@ -461,8 +469,8 @@ end
     size(t1) == size(t2)
 end
 
-program_id(axis) = Tensor(CT.create_get_program_id!(get_builder_ref(), axis), TrInt32)
-num_programs(axis) = Tensor(CT.create_get_num_programs!(get_builder_ref(), axis), TrInt32)
+program_id(axis) = Tensor(CT.create_get_program_id!(get_builder_ref(), axis-1), TrInt32)
+num_programs(axis) = Tensor(CT.create_get_num_programs!(get_builder_ref(), axis-1), TrInt32)
 @test @wbc begin program_id(1); true end
 @test @wbc begin num_programs(1); true end
 
@@ -472,7 +480,7 @@ using MLStyle
 
 _split_arg(e) = @match e begin
     Expr(:(::), name, Tsym) => (name, Tsym) 
-    x => begin @show x.head; throw("Binary op must take two tensors") end
+    x => begin x.head; throw("Binary op must take two tensors") end
 end
 macro binary_op_implicit_casting(fn)
     jlfn = JLFunction(fn)
@@ -688,7 +696,7 @@ expanddims(x::Tensor{TritonBlockType{S, T}}, axis::Int) where {S, T} = begin
     new_shape[1:(axis-1)] .= dims[1:axis-1]
     new_shape[axis] = 1
     new_shape[axis + 1:end] .= dims[axis:end]
-    new_type = TritonBlockType{to_tuple_type(new_shape), T}
+    new_type = TritonBlockType{vec_to_dimtuple(new_shape), T}
     Tensor(CT.create_expand_dims!(x.builder, x.handle, axis-1), new_type)
 end
 @test @wbc size(expanddims(full((2, 3), 1.0), 2)) == [2, 1, 3]
@@ -707,10 +715,10 @@ function broadcast_impl_shape(x::Tensor{TritonBlockType{S, T}}, shape) where {S,
             new_shape[i] = src_shape[i]
         end
     end
-    Tensor(CT.create_broadcast!(x.builder, x.handle, new_shape), TritonBlockType{to_tuple_type(new_shape), T})
+    Tensor(CT.create_broadcast!(x.builder, x.handle, new_shape), TritonBlockType{vec_to_dimtuple(new_shape), T})
 end
 function broadcast_impl_shape(x::Tensor{T}, shape) where T <: TritonScalarTypes
-    Tensor(CT.create_splat!(x.builder, x.handle, shape), TritonBlockType{to_tuple_type(shape), T})
+    Tensor(CT.create_splat!(x.builder, x.handle, collect(Int64, shape)), TritonBlockType{vec_to_dimtuple(shape), T})
 end
 broadcast_impl_shape(x::IntoTensor, shape) = broadcast_impl_shape(Tensor(x), shape)
 
@@ -852,9 +860,9 @@ triton_return() = CT.ret!(get_builder_ref(), CT.CxxRef{CT.Value}[])
 
 device_print(prefix, args...) = begin
     handles = collect(map(x -> Base.unsafe_convert(CT.CxxRef{CT.Value}, CT.CxxRef(x.handle)), args))
-    CT.create_print!(builder, prefix, handles)
+    CT.create_print!(get_builder_ref(), prefix, handles)
 end
-@test @wbc begin device_print(builder, "hello", full((2, 3), 5), full((2, 3), 5)); true end
+@test @wbc begin device_print("hello", full((2, 3), 5), full((2, 3), 5)); true end
 
 
 triton_yield(vs...) = begin
@@ -870,19 +878,13 @@ types_shapes_match(x, y) = shapes_match(x, y) && scalar_type_of(trtype(x)) == sc
 
 triton_where(cond::IntoTensor, x::IntoTensor, y::IntoTensor) = begin
     cond = Tensor(cond); x = Tensor(x); y = Tensor(y)
-    
-    @show cond
     cond = cast(cond, TrBool)
-
     if is_block(trtype(cond))
         cond, x, y = triton_broadcast(cond, x, y)
     else
         x, y = triton_broadcast(x, y)
     end
-
-    @show x
-
-    @assert types_shapes_match(x, y)
+    @assert types_shapes_match(x, y) "x and y must have the same type and shape, got $x and $y"
     Tensor(CT.create_select!(cond.builder, cond.handle, x.handle, y.handle), trtype(x))
 end
 @test @wbc begin
@@ -958,3 +960,52 @@ end
 #     # ret_ty = BlockTritonType(accum_type, [M, N])
 #     Tensor(x.builder, CT.create_dot!(x.builder, x.handle, y.handle, accum.handle, allow_tf32), accum.type)
 # end
+
+
+
+
+# MATH OPERATIONS
+
+TritonBlockOrSimple{S, T} = Union{TritonBlockType{S, T}, T}
+
+# TODO should I make this more julian and require broadcasting on block types?
+
+for (fn, node_create_fn) in [(:exp, :create_exp!), (:log, :create_log!), (:cos, :create_cos!), (:sin, :create_sin!), (:sqrt, :create_sqrt!)]
+    @eval begin
+        function $fn(x::Tensor{T}) where {S, T <: Union{TritonBlockOrSimple{S, TrFloat32}, TritonBlockOrSimple{S, TrFloat64}}}
+            Tensor(CT.$node_create_fn(get_builder_ref(), x.handle), trtype(x))
+        end
+    end
+end
+@test @wbc begin x = full((16, 32), 5.0); size(sqrt(x)) == [16, 32] end
+@test @wbc begin x = Tensor(3.0); size(sqrt(x)) == [] end
+
+function abs(x::Tensor{T}) where T
+    if is_floating_bi(T)
+        Tensor(CT.create_fabs!(get_builder_ref(), x.handle), T)
+    elseif is_signed_bi(T)
+        Tensor(CT.create_iabs!(get_builder_ref(), x.handle), T)
+    elseif is_integer_bi(T)
+        x
+    else
+        error("Unexpected type $T")
+    end
+end
+
+# function find_common_broadcast_size(vec_of_dims)
+#     lengths = unique(length.(vec_of_dims))
+
+# end
+
+# EXTERNAL CALLS
+
+# String(:asdf)
+
+function external_call(lib_name, lib_path, fn_symbol, ret_type, is_pure, args...)
+    builder = get_builder_ref()
+    arg_type_objects = [construct_ir_type(builder, trtype(arg)) for arg in args]
+
+    # TODO implicitly broadcast first
+
+    Tensor(CT.create_extern_elementwise!(lib_name, lib_path, String(fn_symbol), args, construct_ir_type(builder, ret_type), is_pure), ret_type)
+end

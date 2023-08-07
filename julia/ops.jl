@@ -1,10 +1,10 @@
 
 get_fn_type(builder, param_types) = begin
     ir_params = CT.CxxRef.([construct_ir_type(builder, t) for t in param_types])
-    CT.get_function_ty(builder, ir_params, Vector{eltype(ir_params)}())
+    CT.get_function_ty!(builder, ir_params, Vector{eltype(ir_params)}())
 end
 
-_get_ip_and_loc(builder) = (CT.get_loc(builder), CT.get_insertion_point(builder))
+_get_ip_and_loc(builder) = (CT.get_loc(builder), CT.get_insertion_point!(builder))
 _set_ip_and_loc(builder, ip, loc) = begin CT.set_loc!(builder, ip); CT.restore_insertion_point!(builder, loc) end
 @test @wcok _set_ip_and_loc(builder, _get_ip_and_loc(builder)...)
 
@@ -17,8 +17,8 @@ end
 
 
 
-tupleize(xs::Tuple{Vararg{T}}) where T = xs
-tupleize(x::T) where T = (x,)
+tupleize(xs::T) where {T <: Tuple} = xs
+tupleize(x) = (x,)
 # tupleize(nothing) = (x,)
 
 triton_for!(fn, lb::IntoTensor, ub::IntoTensor, step::IntoTensor, init_arguments::Vararg{Tensor}) = begin
@@ -28,11 +28,11 @@ triton_for!(fn, lb::IntoTensor, ub::IntoTensor, step::IntoTensor, init_arguments
     step = Tensor(step)
 
     # bd = lb.builder
-    through_var_types = [t.type for t in init_arguments]
+    through_var_types = trtype.(init_arguments)
 
     for_op = CT.create_for_op!(bd, lb.handle, ub.handle, step.handle, CT.StdVector([ia.handle for ia in init_arguments]))
     # for_op = CT.create_for_op!(bd, lb.handle, ub.handle, step.handle, CT.StdVector{CT.ValueAllocated}([ia.handle for ia in init_arguments]))
-    ind_var = Tensor(bd, CT.get_induction_var(for_op), lb.type)
+    ind_var = Tensor(bd, CT.get_induction_var(for_op), trtype(lb))
     
     orig_iploc = _get_ip_and_loc(bd)
     
@@ -44,17 +44,23 @@ triton_for!(fn, lb::IntoTensor, ub::IntoTensor, step::IntoTensor, init_arguments
     through_args = [Tensor(bd, h, t) for (h, t) in zip(through_arg_handles, through_var_types)]
 
     res_vars = fn(ind_var, through_args...) |> tupleize 
-    # res_vars = fn(cast(ind_var, Tint32), through_args...) |> tupleize 
 
+    # @show res_vars
+    # @show trtype.(res_vars) .== through_var_types
+    # @show objectid.(trtype.(res_vars))
+    # @show objectid.(through_var_types)
+    
     @assert length(res_vars) == length(through_var_types)
-    @assert [t.type for t in res_vars] == through_var_types
-    triton_yield(bd, res_vars...)
+    @assert trtype.(res_vars) == through_var_types "Expected \n$(through_var_types)\n  got \n$(trtype.(res_vars))\n"
+    triton_yield(res_vars...)
     CT.merge_block_before!(CT.CxxRef(body_block), CT.CxxRef(CT.get_body(for_op, 0)))
 
     _set_ip_and_loc(bd, orig_iploc...)
     return get_op_results(bd, for_op, through_var_types)
 end
 
+(TritonBlockType{Tuple{128, 64}, TrFloat32}, TritonBlockType{Tuple{128, 32}, TritonPointerType{TrFloat16}}, TritonBlockType{Tuple{32, 64}, TritonPointerType{TrFloat16}}
+    ) == (TritonBlockType{Tuple{128, 64}, TrFloat32}, TritonBlockType{Tuple{128, 32}, TritonPointerType{TrFloat16}}, TritonBlockType{Tuple{32, 64}, TritonPointerType{TrFloat16}})
 # triton_for!(fn, builder, lb::Number, ub::Number, step::Number, init_arguments::Vararg{Tensor}) = begin
 #     triton_for!(fn, Tensor(builder, lb), Tensor(builder, ub), Tensor(builder, step), init_arguments...)
 # end

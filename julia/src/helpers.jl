@@ -110,23 +110,23 @@ is_integer(x::ScalarTritonType) = @match x begin
 end
 
 construct_ir_type(builder, t::TritonType)::CT.MLIRTypeAllocated = @match t begin
-    Tvoid => CppTriton.get_void_ty(builder)
-    Tint1 => CppTriton.get_int1_ty(builder)
-    Tint8 => CppTriton.get_int8_ty(builder)
-    Tuint8 => CppTriton.get_int8_ty(builder)
-    Tint16 => CppTriton.get_int16_ty(builder)
-    Tuint16 => CppTriton.get_int16_ty(builder)
-    Tint32 => CppTriton.get_int32_ty(builder)
-    Tuint32 => CppTriton.get_int32_ty(builder)
-    Tint64 => CppTriton.get_int64_ty(builder)
-    Tuint64 => CppTriton.get_int64_ty(builder)
-    Tfp8e5 => CppTriton.get_fp8e5_ty(builder)
-    Tfp8e4 => CppTriton.get_fp8e4_ty(builder)
-    Tfp8e4b15 => CppTriton.get_fp8e4b15_ty(builder)
-    Tfp16 => CppTriton.get_half_ty(builder)
-    Tbf16 => CppTriton.get_bf16_ty(builder)
-    Tfp32 => CppTriton.get_float_ty(builder)
-    Tfp64 => CppTriton.get_double_ty(builder)
+    Tvoid => CppTriton.get_void_ty!(builder)
+    Tint1 => CppTriton.get_int1_ty!(builder)
+    Tint8 => CppTriton.get_int8_ty!(builder)
+    Tuint8 => CppTriton.get_int8_ty!(builder)
+    Tint16 => CppTriton.get_int16_ty!(builder)
+    Tuint16 => CppTriton.get_int16_ty!(builder)
+    Tint32 => CppTriton.get_int32_ty!(builder)
+    Tuint32 => CppTriton.get_int32_ty!(builder)
+    Tint64 => CppTriton.get_int64_ty!(builder)
+    Tuint64 => CppTriton.get_int64_ty!(builder)
+    Tfp8e5 => CppTriton.get_fp8e5_ty!(builder)
+    Tfp8e4 => CppTriton.get_fp8e4_ty!(builder)
+    Tfp8e4b15 => CppTriton.get_fp8e4b15_ty!(builder)
+    Tfp16 => CppTriton.get_half_ty!(builder)
+    Tbf16 => CppTriton.get_bf16_ty!(builder)
+    Tfp32 => CppTriton.get_float_ty!(builder)
+    Tfp64 => CppTriton.get_double_ty!(builder)
 end
 scalar_type(x::ScalarTritonType) = x
 base_scalar_type(x::ScalarTritonType) = x
@@ -141,7 +141,7 @@ end
 @as_record PointerTritonType
 construct_ir_type(builder, t::PointerTritonType)::CT.MLIRTypeAllocated =
     # hardcode address space (third param) as 1
-    CppTriton.get_ptr_ty(builder, construct_ir_type(builder, t.scalar), 1)
+    CppTriton.get_ptr_ty!(builder, construct_ir_type(builder, t.scalar), 1)
 scalar_type(x::PointerTritonType) = x
 base_scalar_type(x::PointerTritonType) = x.scalar
 is_pointer(x::PointerTritonType) = true
@@ -163,7 +163,7 @@ function BlockTritonType(scalar, dims)
 end
 
 construct_ir_type(builder, t::BlockTritonType)::CT.MLIRTypeAllocated =
-    CppTriton.get_block_ty(builder, construct_ir_type(builder, t.scalar), collect(t.dims))
+    CppTriton.get_block_ty!(builder, construct_ir_type(builder, t.scalar), collect(t.dims))
 scalar_type(x::BlockTritonType) = x.scalar
 base_scalar_type(x::BlockTritonType) = base_scalar_type(x.scalar)
 is_block(x::BlockTritonType) = true
