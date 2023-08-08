@@ -1,12 +1,12 @@
 
 # Tensor
 
-struct Tensor{T <: TritonType}
+struct Tensor{T <: TrTypeable}
     builder
     handle
     type::T
 
-    Tensor{T}(builder, handle, type::T) where {T<:TritonType} = begin
+    Tensor{T}(builder, handle, type::T) where {T<:TrTypeable} = begin
         # hacky way to double check types since it's annoying to extract a julia-rep of a type from a handle
         t1 = CT.get_type(handle)
         t2 = construct_ir_type(builder, type)
@@ -17,7 +17,7 @@ struct Tensor{T <: TritonType}
         new(builder, handle, type)
     end
 end
-Tensor(builder, handle, type::T) where {T<:TritonType} = Tensor{T}(builder, handle, type)
+Tensor(builder, handle, type::T) where {T<:TrTypeable} = Tensor{T}(builder, handle, type)
 
 Tensor(x::T) where {T<:Tensor} = x
 
@@ -60,11 +60,11 @@ numel(x::Tensor) = numel(x.type)
 Base.size(x::Tensor) = size(x.type)
 Base.size(x::Tensor, dim) = size(x.type, dim)
 
-cast(input::Tensor, dst_ty::Union{TritonType, PointerTritonType}) = begin
+cast(input::Tensor, dst_ty::Union{TrTypeable, PointerTrTypeable}) = begin
     builder = input.builder
     src_ty = input.type
     if is_block(src_ty) && !is_block(dst_ty)
-        dst_ty = BlockTritonType(dst_ty, src_ty.dims)
+        dst_ty = BlockTrTypeable(dst_ty, src_ty.dims)
     end
     (src_ty == dst_ty) && return input
 
@@ -235,8 +235,8 @@ cast(input::Tensor, dst_ty::Union{TritonType, PointerTritonType}) = begin
     throw("Unsupported cast from $src_ty to $dst_ty")    
 end
 
-@test_throws "Unsupported" @wc cast(Tensor(builder, 5.0), PointerTritonType(Tfp64))
-@test @wc (cast(Tensor(builder, 3), PointerTritonType(Tint64)); true)
+@test_throws "Unsupported" @wc cast(Tensor(builder, 5.0), PointerTrTypeable(Tfp64))
+@test @wc (cast(Tensor(builder, 3), PointerTrTypeable(Tint64)); true)
 
 using Expronicon
 
@@ -244,7 +244,7 @@ using Expronicon
     start = Int32(start)
     endd = Int32(endd)
     shape = [endd - start,]
-    ret_ty = BlockTritonType(Tint32, shape)
+    ret_ty = BlockTrTypeable(Tint32, shape)
     Tensor(builder, CT.create_make_range!(builder, start, endd), ret_ty)
 end
 
@@ -254,7 +254,7 @@ end
 @with_scoped_builder full(builder, dims::Vector{Int64}, value::Tensor) = begin
     @assert numel(value) == 1 "Value must be a scalar"
     # value = cast(value, dtype)
-    ret_ty = BlockTritonType(value.type, dims)
+    ret_ty = BlockTrTypeable(value.type, dims)
     Tensor(builder, CT.create_splat!(builder, value.handle, collect(dims)), ret_ty)
 end
 
@@ -266,7 +266,7 @@ end
         tensor = Tensor(builder, value)
         cast(tensor, dtype)
     end
-    Tensor(builder, CT.create_splat!(builder, value_ir.handle, collect(dims)), BlockTritonType(dtype, dims))
+    Tensor(builder, CT.create_splat!(builder, value_ir.handle, collect(dims)), BlockTrTypeable(dtype, dims))
 end
 
 @test @wcok begin
@@ -278,7 +278,7 @@ end
 
 function triton_broadcast(lhs::Tensor, rhs::Tensor)
     @match lhs.type, rhs.type begin
-        (BlockTritonType(lhs_sca_ty, lhs_dims, _), BlockTritonType(rhs_sca_ty, rhs_dims, _)) => begin
+        (BlockTrTypeable(lhs_sca_ty, lhs_dims, _), BlockTrTypeable(rhs_sca_ty, rhs_dims, _)) => begin
             if lhs_dims == rhs_dims
                 return lhs, rhs
             end
@@ -295,13 +295,13 @@ function triton_broadcast(lhs::Tensor, rhs::Tensor)
                 end
             end
             lhs = if lhs_dims != target_shape
-                Tensor(lhs.builder, CT.create_broadcast!(lhs.builder, lhs.handle, collect(target_shape)), BlockTritonType(lhs_sca_ty, target_shape))
+                Tensor(lhs.builder, CT.create_broadcast!(lhs.builder, lhs.handle, collect(target_shape)), BlockTrTypeable(lhs_sca_ty, target_shape))
             else
                 lhs
             end
 
             rhs = if rhs_dims != target_shape
-                Tensor(rhs.builder, CT.create_broadcast!(rhs.builder, rhs.handle, collect(target_shape)), BlockTritonType(rhs_sca_ty, target_shape))
+                Tensor(rhs.builder, CT.create_broadcast!(rhs.builder, rhs.handle, collect(target_shape)), BlockTrTypeable(rhs_sca_ty, target_shape))
             else
                 rhs
             end
@@ -310,12 +310,12 @@ function triton_broadcast(lhs::Tensor, rhs::Tensor)
 
             # throw("TODO, shapes lhs: $lhs_dims, rhs: $rhs_dims")
         end
-        (BlockTritonType(lhs_sca_ty, lhs_dims, _), rhs_ty) => begin
-            rhs_block_ty = BlockTritonType(rhs_ty, lhs_dims)
+        (BlockTrTypeable(lhs_sca_ty, lhs_dims, _), rhs_ty) => begin
+            rhs_block_ty = BlockTrTypeable(rhs_ty, lhs_dims)
             lhs, Tensor(lhs.builder, CT.create_splat!(lhs.builder, rhs.handle, collect(rhs_block_ty.dims)), rhs_block_ty)
         end
-        (lhs_ty, BlockTritonType(rhs_sca_ty, rhs_dims, _)) => begin
-            lhs_block_ty = BlockTritonType(lhs_ty, rhs_dims)
+        (lhs_ty, BlockTrTypeable(rhs_sca_ty, rhs_dims, _)) => begin
+            lhs_block_ty = BlockTrTypeable(lhs_ty, rhs_dims)
             Tensor(rhs.builder, CT.create_splat!(rhs.builder, lhs.handle, collect(lhs_block_ty.dims)), lhs_block_ty), rhs
         end
         (_, _) => (lhs, rhs)
@@ -347,9 +347,9 @@ end
 @test @wc !types_shapes_match(Tensor(builder, 1.0), Tensor(builder, 1.0f0))
 
 
-_replace_ptr_with_int32(x::ScalarTritonType) = x
-_replace_ptr_with_int32(x::PointerTritonType) = Tint32
-_replace_ptr_with_int32(x::BlockTritonType) = BlockTritonType(_replace_ptr_with_int32(x.scalar), x.dims)
+_replace_ptr_with_int32(x::ScalarTrTypeable) = x
+_replace_ptr_with_int32(x::PointerTrTypeable) = Tint32
+_replace_ptr_with_int32(x::BlockTrTypeable) = BlockTrTypeable(_replace_ptr_with_int32(x.scalar), x.dims)
 
 # identifies integers with pointers
 types_shapes_match_uptopointer(x::Tensor, y::Tensor) = begin
@@ -358,31 +358,31 @@ types_shapes_match_uptopointer(x::Tensor, y::Tensor) = begin
 
     (x_type == y_type) && (size(x) == size(y))
     # @match x_type, y_type begin
-    #     (BlockTritonType(x_sca_ty, dims, _), BlockTritonType(y_sca_ty, dims, _)) => begin
+    #     (BlockTrTypeable(x_sca_ty, dims, _), BlockTrTypeable(y_sca_ty, dims, _)) => begin
     #         base_scalar_type(x_sca_ty) == base_scalar_type(y_sca_ty) && (size(x) == size(y))
     #     end
     #     (_, _) => base_scalar_type(x.type) == base_scalar_type(y.type) && (size(x) == size(y))
     # end
     # (base_scalar_type(x) ) && (size(x) == size(y))
 end
-@test @wc types_shapes_match_uptopointer(Tensor(builder, Int32(4)), cast(Tensor(builder, 3), PointerTritonType(Tint32)))
-@test @wc !types_shapes_match_uptopointer(Tensor(builder, Int64(4)), cast(Tensor(builder, 3), PointerTritonType(Tint64)))
-@test @wc !types_shapes_match_uptopointer(full(builder, [2,], 4, Tint64), cast(Tensor(builder, 3), PointerTritonType(Tint64)))
+@test @wc types_shapes_match_uptopointer(Tensor(builder, Int32(4)), cast(Tensor(builder, 3), PointerTrTypeable(Tint32)))
+@test @wc !types_shapes_match_uptopointer(Tensor(builder, Int64(4)), cast(Tensor(builder, 3), PointerTrTypeable(Tint64)))
+@test @wc !types_shapes_match_uptopointer(full(builder, [2,], 4, Tint64), cast(Tensor(builder, 3), PointerTrTypeable(Tint64)))
 
 
 points_to_type(ptr::Tensor, val::Tensor) = @match ptr.type, val.type begin
-    (BlockTritonType(PointerTritonType(lhs_ty), lhs_dims, _), BlockTritonType(rhs_ty::ScalarTritonType, rhs_dims, _)) => begin
+    (BlockTrTypeable(PointerTrTypeable(lhs_ty), lhs_dims, _), BlockTrTypeable(rhs_ty::ScalarTrTypeable, rhs_dims, _)) => begin
         return lhs_ty == rhs_ty && lhs_dims == rhs_dims
     end
-    # (BlockTritonType(PointerTritonType(lhs_ty), _, _), rhs_ty::ScalarTritonType) => begin
+    # (BlockTrTypeable(PointerTrTypeable(lhs_ty), _, _), rhs_ty::ScalarTrTypeable) => begin
     #     return lhs_ty == rhs_ty
     # end
-    (PointerTritonType(lhs_ty), rhs_ty::ScalarTritonType) => begin
+    (PointerTrTypeable(lhs_ty), rhs_ty::ScalarTrTypeable) => begin
         return lhs_ty == rhs_ty
     end
 end
-@test @wc points_to_type(cast(Tensor(builder, 3), PointerTritonType(Tint32)), Tensor(builder, Int32(3)))
-@test @wc !points_to_type(cast(Tensor(builder, 3), PointerTritonType(Tint32)), Tensor(builder, Int64(3)))
+@test @wc points_to_type(cast(Tensor(builder, 3), PointerTrTypeable(Tint32)), Tensor(builder, Int32(3)))
+@test @wc !points_to_type(cast(Tensor(builder, 3), PointerTrTypeable(Tint32)), Tensor(builder, Int64(3)))
 
 @with_scoped_builder program_id(builder, axis) = try
     Tensor(builder, CT.create_get_program_id!(builder, axis-1), Tint32)
@@ -481,13 +481,13 @@ end
 @test_throws "" @wc Tensor(builder, 1.0) + Tensor(builder, 2)
 @test_throws "" @wc Tensor(builder, 1.0) + full(builder, [2,], 2.0, Tfloat64)
 
-@with_scoped_builder Base.zero(builder, ty::TritonType) = Tensor(builder, CT.get_null_value!(builder, construct_ir_type(builder, ty)), ty)
+@with_scoped_builder Base.zero(builder, ty::TrTypeable) = Tensor(builder, CT.get_null_value!(builder, construct_ir_type(builder, ty)), ty)
 @test @wcok zero(builder, Tint32)
 
 @with_scoped_builder triton_all_ones(builder, ty) = Tensor(builder, CT.get_all_ones_value!(builder, construct_ir_type(builder, ty)), ty)
 @test @wcok triton_all_ones(builder, Tint32)
 
-@with_scoped_builder Base.one(builder, ty::TritonType) = @match ty begin
+@with_scoped_builder Base.one(builder, ty::TrTypeable) = @match ty begin
     Tint64 => Tensor(builder, Int64(1))
     Tint32 => Tensor(builder, Int32(1))
     Tfp64 => Tensor(builder, Float64(1.0))
@@ -522,7 +522,7 @@ Base.:-(x::Tensor) = begin
     zero(x.builder, x.type) - x
 end 
 @test @wcok -Tensor(builder, 1.0)
-@test @wcok cast(Tensor(builder, 1), PointerTritonType(Tint64)) - Tensor(builder, Int32(2))
+@test @wcok cast(Tensor(builder, 1), PointerTrTypeable(Tint64)) - Tensor(builder, Int32(2))
 
 @binary_op_implicit_casting Base.:*(x::Tensor, y::Tensor) = begin
     x, y = triton_broadcast(x, y)
@@ -634,7 +634,7 @@ for (op_name, float_op, signed_op, unsigned_op) in COMPARISON_OPS
         @test @wc ($op_name(Tensor(builder, 1.0), Tensor(builder, 2.0))).type == Tint1
         @test @wc ($op_name(Tensor(builder, Int32(1)), Tensor(builder, Int32(1)))).type == Tint1
         @test @wc ($op_name(Tensor(builder, UInt32(1)), Tensor(builder, UInt32(1)))).type == Tint1
-        @test @wc ($op_name(full(builder, [5,], 5.0, Tfp64), full(builder, [5,], 4.0, Tfp64))).type == BlockTritonType(Tint1, [5,])
+        @test @wc ($op_name(full(builder, [5,], 5.0, Tfp64), full(builder, [5,], 4.0, Tfp64))).type == BlockTrTypeable(Tint1, [5,])
     end)
 end
 
@@ -660,7 +660,7 @@ expanddims(x::Tensor, axis::Int) = begin
     new_shape[1:(axis-1)] .= x.type.dims[1:axis-1]
     new_shape[axis] = 1
     new_shape[axis + 1:end] .= x.type.dims[axis:end]
-    new_type = BlockTritonType(x.type.scalar, new_shape)
+    new_type = BlockTrTypeable(x.type.scalar, new_shape)
     Tensor(x.builder, CT.create_expand_dims!(x.builder, x.handle, axis-1), new_type)
 end
 @test @wc size(expanddims(full(builder, [2, 3], 1.0, Tfp64), 2)) == [2, 1, 3]
@@ -669,7 +669,7 @@ broadcast_impl_shape(x::Tensor, shape) = let
     shape = collect(Int64, shape)
     builder = x.builder
     @match x.type begin
-        BlockTritonType(scalar_ty, src_shape, _) => begin
+        BlockTrTypeable(scalar_ty, src_shape, _) => begin
             @assert length(src_shape) == length(shape) "Shapes must have the same length, got $src_shape and $shape"
             new_shape = similar(src_shape, length(src_shape))
             for i in 1:length(src_shape)
@@ -680,11 +680,11 @@ broadcast_impl_shape(x::Tensor, shape) = let
                     new_shape[i] = src_shape[i]
                 end
             end
-            ret_ty = BlockTritonType(scalar_ty, new_shape)
+            ret_ty = BlockTrTypeable(scalar_ty, new_shape)
             Tensor(x.builder, CT.create_broadcast!(builder, x.handle, new_shape), ret_ty)
         end
         _ => begin
-            ret_ty = BlockTritonType(x.type, shape)
+            ret_ty = BlockTrTypeable(x.type, shape)
             Tensor(x.builder, CT.create_splat!(builder, x.handle, shape), ret_ty)
         end
     end
@@ -696,7 +696,7 @@ broadcast_impl_shape(x::IntoTensor, shape) = broadcast_impl_shape(Tensor(x), sha
     size(res) == [2, 5, 3] && scalar_type(res.type) == Tfp32
 end
 
-@with_scoped_builder Base.zeros(builder, ty::TritonType, dims) = broadcast_impl_shape(zero(builder, ty), dims)
+@with_scoped_builder Base.zeros(builder, ty::TrTypeable, dims) = broadcast_impl_shape(zero(builder, ty), dims)
 @test @wcok zeros(builder, Tint32, [2,])
 
 _string_to_load_cache_modifier(x) = begin
@@ -741,7 +741,7 @@ _load_legacy(ptr::Tensor, mask::Union{Tensor, Nothing}, other::Union{Tensor, Not
     @assert isnothing(mask) || (is_bool(mask.type) && shapes_match(ptr, mask)) "mask must be a boolean tensor with the same shape as ptr, got $mask and $ptr"
     @assert isnothing(other) || points_to_type(ptr, other) "other must have the same type as ptr, got $other and $ptr"
 
-    result_ty = if is_block(ptr.type) BlockTritonType(base_scalar_type(ptr.type), ptr.type.dims) else base_scalar_type(ptr.type) end
+    result_ty = if is_block(ptr.type) BlockTrTypeable(base_scalar_type(ptr.type), ptr.type.dims) else base_scalar_type(ptr.type) end
 
     if isnothing(mask)
         Tensor(ptr.builder, CT.create_load!(ptr.builder, ptr.handle, cache, eviction, is_volatile), result_ty)
@@ -751,14 +751,14 @@ _load_legacy(ptr::Tensor, mask::Union{Tensor, Nothing}, other::Union{Tensor, Not
 end
 
 @test @wcok begin
-    ptr = cast(Tensor(builder, 1), PointerTritonType(Tfp32))
+    ptr = cast(Tensor(builder, 1), PointerTrTypeable(Tfp32))
     mask = Tensor(builder, true)
     other = Tensor(builder, 2.0f0)
     _load_legacy(ptr, mask, other, CppTriton.CM_NONE, CppTriton.EP_NORMAL, false)
     _load_legacy(ptr, nothing, nothing, CppTriton.CM_NONE, CppTriton.EP_NORMAL, false)
 end
 @test @wcok begin
-    ptr = cast(full(builder, [2, 3], 5, Tint64), PointerTritonType(Tint64))
+    ptr = cast(full(builder, [2, 3], 5, Tint64), PointerTrTypeable(Tint64))
     mask = full(builder, [2, 3], true, Tint1)
     other = full(builder, [2, 3], 2, Tint64)
     _load_legacy(ptr, nothing, nothing, CppTriton.CM_NONE, CppTriton.EP_NORMAL, false)
@@ -797,14 +797,14 @@ _store_legacy(ptr::Tensor, val::Tensor, mask::Union{Tensor, Nothing}, cache, evi
 end
 
 @test @wcok begin
-    ptr = cast(Tensor(builder, 1), PointerTritonType(Tfp32))
+    ptr = cast(Tensor(builder, 1), PointerTrTypeable(Tfp32))
     val = Tensor(builder, 2.0f0)
     mask = Tensor(builder, true)
     _store_legacy(ptr, val, mask, CppTriton.CM_NONE, CppTriton.EP_NORMAL)
     _store_legacy(ptr, val, nothing, CppTriton.CM_NONE, CppTriton.EP_NORMAL)
 end
 @test @wcok begin
-    ptr = cast(full(builder, [2, 3], 5, Tint64), PointerTritonType(Tint64))
+    ptr = cast(full(builder, [2, 3], 5, Tint64), PointerTrTypeable(Tint64))
     val = full(builder, [2, 3], 2, Tint64)
     mask = full(builder, [2, 3], true, Tint1)
     _store_legacy(ptr, val, mask, CppTriton.CM_NONE, CppTriton.EP_NORMAL)
@@ -892,7 +892,7 @@ dot(x::Tensor, y::Tensor; allow_tf32 = true, output_ty=Tfp32) = begin
     M = size(x, 1)
     N = size(y, 2)
     accum_splat = CT.create_splat!(x.builder, accum.handle, [M, N])
-    ret_ty = BlockTritonType(accum_type, [M, N])
+    ret_ty = BlockTrTypeable(accum_type, [M, N])
     Tensor(x.builder, CT.create_dot!(x.builder, x.handle, y.handle, accum_splat, allow_tf32), ret_ty)
 end
 @test @wc begin
@@ -919,6 +919,6 @@ dot_fma(x::Tensor, y::Tensor, accum::Tensor; allow_tf32 = true) = begin
     # M = size(x, 1)
     # N = size(y, 2)
     # accum_splat = CT.create_splat!(x.builder, accum.handle, [M, N])
-    # ret_ty = BlockTritonType(accum_type, [M, N])
+    # ret_ty = BlockTrTypeable(accum_type, [M, N])
     Tensor(x.builder, CT.create_dot!(x.builder, x.handle, y.handle, accum.handle, allow_tf32), accum.type)
 end

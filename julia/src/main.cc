@@ -183,8 +183,8 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
 
   mod.add_bits<mlir::triton::PaddingOption>("PaddingOption",
                                             jlcxx::julia_type("CppEnum"));
-  mod.set_const("PAD_ZERO", mlir::triton::PaddingOption::PAD_ZERO);
-  mod.set_const("PAD_NAN", mlir::triton::PaddingOption::PAD_NAN);
+  mod.set_const("PO_PAD_ZERO", mlir::triton::PaddingOption::PAD_ZERO);
+  mod.set_const("PO_PAD_NAN", mlir::triton::PaddingOption::PAD_NAN);
 
   // py::enum_<mlir::triton::CacheModifier>(m, "CACHE_MODIFIER",
   //                                      py::module_local())

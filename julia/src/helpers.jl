@@ -60,12 +60,12 @@ end
 # end
 
 
-abstract type TritonType end
-is_scalar(x::TritonType) = false
-is_block(x::TritonType) = false
-is_pointer(x::TritonType) = false
+abstract type TrTypeable end
+is_scalar(x::TrTypeable) = false
+is_block(x::TrTypeable) = false
+is_pointer(x::TrTypeable) = false
 
-@data ScalarTritonType <: TritonType begin
+@data ScalarTrTypeable <: TrTypeable begin
     Tvoid
     Tint1
     Tint8
@@ -85,7 +85,7 @@ is_pointer(x::TritonType) = false
     Tfp64
 end
 
-is_floating(x::ScalarTritonType) = @match x begin
+is_floating(x::ScalarTrTypeable) = @match x begin
     Tfp8e5 => true
     Tfp8e4 => true
     Tfp8e4b15 => true
@@ -96,7 +96,7 @@ is_floating(x::ScalarTritonType) = @match x begin
     _ => false
 end
 
-is_integer(x::ScalarTritonType) = @match x begin
+is_integer(x::ScalarTrTypeable) = @match x begin
     Tint1 => true
     Tint8 => true
     Tuint8 => true
@@ -109,7 +109,7 @@ is_integer(x::ScalarTritonType) = @match x begin
     _ => false
 end
 
-construct_ir_type(builder, t::TritonType)::CT.MLIRTypeAllocated = @match t begin
+construct_ir_type(builder, t::TrTypeable)::CT.MLIRTypeAllocated = @match t begin
     Tvoid => CppTriton.get_void_ty!(builder)
     Tint1 => CppTriton.get_int1_ty!(builder)
     Tint8 => CppTriton.get_int8_ty!(builder)
@@ -128,62 +128,62 @@ construct_ir_type(builder, t::TritonType)::CT.MLIRTypeAllocated = @match t begin
     Tfp32 => CppTriton.get_float_ty!(builder)
     Tfp64 => CppTriton.get_double_ty!(builder)
 end
-scalar_type(x::ScalarTritonType) = x
-base_scalar_type(x::ScalarTritonType) = x
-is_scalar(x::ScalarTritonType) = true
+scalar_type(x::ScalarTrTypeable) = x
+base_scalar_type(x::ScalarTrTypeable) = x
+is_scalar(x::ScalarTrTypeable) = true
 
 @test @wcok construct_ir_type(builder, Tvoid)
 
-@struct_hash_equal struct PointerTritonType <: TritonType
-    scalar::ScalarTritonType
+@struct_hash_equal struct PointerTrTypeable <: TrTypeable
+    scalar::ScalarTrTypeable
     #address_space::Int
 end
-@as_record PointerTritonType
-construct_ir_type(builder, t::PointerTritonType)::CT.MLIRTypeAllocated =
+@as_record PointerTrTypeable
+construct_ir_type(builder, t::PointerTrTypeable)::CT.MLIRTypeAllocated =
     # hardcode address space (third param) as 1
     CppTriton.get_ptr_ty!(builder, construct_ir_type(builder, t.scalar), 1)
-scalar_type(x::PointerTritonType) = x
-base_scalar_type(x::PointerTritonType) = x.scalar
-is_pointer(x::PointerTritonType) = true
-is_floating(x::PointerTritonType) = false
-is_integer(x::PointerTritonType) = false
+scalar_type(x::PointerTrTypeable) = x
+base_scalar_type(x::PointerTrTypeable) = x.scalar
+is_pointer(x::PointerTrTypeable) = true
+is_floating(x::PointerTrTypeable) = false
+is_integer(x::PointerTrTypeable) = false
 
 
 TRITON_MAX_TENSOR_NUMEL = 131072
-@struct_hash_equal struct BlockTritonType <: TritonType
-    scalar::Union{ScalarTritonType, PointerTritonType}
+@struct_hash_equal struct BlockTrTypeable <: TrTypeable
+    scalar::Union{ScalarTrTypeable, PointerTrTypeable}
     dims::Vector{Int64}
     numel
 end
-@as_record BlockTritonType
-function BlockTritonType(scalar, dims)
+@as_record BlockTrTypeable
+function BlockTrTypeable(scalar, dims)
     numel = prod(dims)
     @assert numel <= TRITON_MAX_TENSOR_NUMEL "Tensor size exceeds Triton's limit"
-    BlockTritonType(scalar, dims, numel)
+    BlockTrTypeable(scalar, dims, numel)
 end
 
-construct_ir_type(builder, t::BlockTritonType)::CT.MLIRTypeAllocated =
+construct_ir_type(builder, t::BlockTrTypeable)::CT.MLIRTypeAllocated =
     CppTriton.get_block_ty!(builder, construct_ir_type(builder, t.scalar), collect(t.dims))
-scalar_type(x::BlockTritonType) = x.scalar
-base_scalar_type(x::BlockTritonType) = base_scalar_type(x.scalar)
-is_block(x::BlockTritonType) = true
-is_floating(x::BlockTritonType) = is_floating(x.scalar)
-is_integer(x::BlockTritonType) = is_integer(x.scalar)
-is_pointer(x::BlockTritonType) = is_pointer(x.scalar)
+scalar_type(x::BlockTrTypeable) = x.scalar
+base_scalar_type(x::BlockTrTypeable) = base_scalar_type(x.scalar)
+is_block(x::BlockTrTypeable) = true
+is_floating(x::BlockTrTypeable) = is_floating(x.scalar)
+is_integer(x::BlockTrTypeable) = is_integer(x.scalar)
+is_pointer(x::BlockTrTypeable) = is_pointer(x.scalar)
 
 
 # more type helpers
 
-is_fp8(x::TritonType) = is_fp8(base_scalar_type(x))
-is_fp8(x::ScalarTritonType) = @match x begin
+is_fp8(x::TrTypeable) = is_fp8(base_scalar_type(x))
+is_fp8(x::ScalarTrTypeable) = @match x begin
     Tfp8e5 => true
     Tfp8e4 => true
     Tfp8e4b15 => true
     _ => false
 end
 
-primitive_bandwidth(x::TritonType) = primitive_bandwidth(base_scalar_type(x))
-primitive_bandwidth(x::ScalarTritonType) = @match x begin
+primitive_bandwidth(x::TrTypeable) = primitive_bandwidth(base_scalar_type(x))
+primitive_bandwidth(x::ScalarTrTypeable) = @match x begin
     Tint1 => 1
     Tint8 => 8
     Tuint8 => 8
@@ -203,8 +203,8 @@ primitive_bandwidth(x::ScalarTritonType) = @match x begin
     _ => error("Not a primitive type")
 end
 
-fp_mantissa_width(x::TritonType) = fp_mantissa_width(base_scalar_type(x))
-fp_mantissa_width(x::ScalarTritonType) = @match x begin
+fp_mantissa_width(x::TrTypeable) = fp_mantissa_width(base_scalar_type(x))
+fp_mantissa_width(x::ScalarTrTypeable) = @match x begin
     Tfp8e5 => 2
     Tfp8e4 => 3
     Tfp8e4b15 => 3
@@ -215,8 +215,8 @@ fp_mantissa_width(x::ScalarTritonType) = @match x begin
     _ => error("Not a floating point type")
 end
 
-is_integer(x::TritonType) = is_integer(base_scalar_type(x))
-is_integer(x::ScalarTritonType) = @match x begin
+is_integer(x::TrTypeable) = is_integer(base_scalar_type(x))
+is_integer(x::ScalarTrTypeable) = @match x begin
     Tint1 => true
     Tint8 => true
     Tuint8 => true
@@ -229,8 +229,8 @@ is_integer(x::ScalarTritonType) = @match x begin
     _ => false
 end
 
-is_signed(x::TritonType) = is_signed(base_scalar_type(x))
-is_signed(x::ScalarTritonType) = @match x begin
+is_signed(x::TrTypeable) = is_signed(base_scalar_type(x))
+is_signed(x::ScalarTrTypeable) = @match x begin
     Tint1 => true
     Tint8 => true
     Tint16 => true
@@ -243,8 +243,8 @@ is_signed(x::ScalarTritonType) = @match x begin
     _ => error("Not an integer type")
 end
 
-is_standard_floating(x::TritonType) = is_standard_floating(base_scalar_type(x))
-is_standard_floating(x::ScalarTritonType) = @match x begin
+is_standard_floating(x::TrTypeable) = is_standard_floating(base_scalar_type(x))
+is_standard_floating(x::ScalarTrTypeable) = @match x begin
     Tfp16 => true
     Tbf16 => true
     Tfp32 => true
@@ -252,20 +252,20 @@ is_standard_floating(x::ScalarTritonType) = @match x begin
     _ => false
 end
 
-is_bool(x::TritonType) = is_bool(base_scalar_type(x))
-is_bool(x::ScalarTritonType) = x == Tint1
+is_bool(x::TrTypeable) = is_bool(base_scalar_type(x))
+is_bool(x::ScalarTrTypeable) = x == Tint1
 
-numel(x::TritonType) = 1
-numel(x::BlockTritonType) = x.numel
+numel(x::TrTypeable) = 1
+numel(x::BlockTrTypeable) = x.numel
 
-Base.size(x::TritonType) = Int64[]
-Base.size(x::BlockTritonType) = x.dims
-Base.size(x::BlockTritonType, dim) = x.dims[dim]
+Base.size(x::TrTypeable) = Int64[]
+Base.size(x::BlockTrTypeable) = x.dims
+Base.size(x::BlockTrTypeable, dim) = x.dims[dim]
 
 
 
 # TODO
-# t1 = PointerTritonType(Tint8)
+# t1 = PointerTrTypeable(Tint8)
 # bt = construct_ir_type(builder, t1)
 # CT.repr(CT.CxxRef(bt))
 
@@ -278,13 +278,13 @@ const TypeMLIRToJuliaNameLookup = let
     ctx = CppTriton.MLIRContext()
     CppTriton.load_triton!(ctx)
     builder = CppTriton.TritonOpBuilder(CppTriton.CxxWrap.CxxPtr(ctx))
-    Dict([CT.repr(CT.CxxRef(construct_ir_type(builder, x()))) => x for x in subtypes(ScalarTritonType)])
+    Dict([CT.repr(CT.CxxRef(construct_ir_type(builder, x()))) => x for x in subtypes(ScalarTrTypeable)])
 end
 
 _parse_type_from_ptrscalar(x::AbstractString) = begin
     if startswith(x, "!tt.ptr<")
         inner = x[9:end-1]
-        PointerTritonType(TypeMLIRToJuliaNameLookup[inner]())
+        PointerTrTypeable(TypeMLIRToJuliaNameLookup[inner]())
     else
         TypeMLIRToJuliaNameLookup[x]()
     end
@@ -296,10 +296,10 @@ _parse_type_from_repr(x::AbstractString) = begin
         parts = split(String(notensor), 'x')
         if length(parts) == 1
             # a 0-dim tensor
-            BlockTritonType(_parse_type_from_ptrscalar(parts[1]), Int64[])
+            BlockTrTypeable(_parse_type_from_ptrscalar(parts[1]), Int64[])
         else
             dims = parse.(Int64, parts[1:end-1])
-            BlockTritonType(_parse_type_from_ptrscalar(parts[end]), dims)
+            BlockTrTypeable(_parse_type_from_ptrscalar(parts[end]), dims)
         end
     else
         _parse_type_from_ptrscalar(x)
@@ -308,9 +308,9 @@ end
 
 ##
 
-# BlockTritonType(PointerTritonType(Tbf16), Int64[], 1) == BlockTritonType(PointerTritonType(Tbf16), Int64[], 1) 
+# BlockTrTypeable(PointerTrTypeable(Tbf16), Int64[], 1) == BlockTrTypeable(PointerTrTypeable(Tbf16), Int64[], 1) 
 
-# res = construct_ir_type(builder, BlockTritonType(Tint64, Int64[1, 2, 3]))
+# res = construct_ir_type(builder, BlockTrTypeable(Tint64, Int64[1, 2, 3]))
 
 # CT.repr(CT.CxxRef(res)) |> _parse_type_from_repr
 
@@ -326,19 +326,19 @@ let do_test(builder, T) = begin
     ctx = CppTriton.MLIRContext()
     CppTriton.load_triton!(ctx)
     builder = CppTriton.TritonOpBuilder(CppTriton.CxxWrap.CxxPtr(ctx))
-    for T in subtypes(ScalarTritonType)
+    for T in subtypes(ScalarTrTypeable)
         do_test(builder, T)
-        do_test(builder, () -> PointerTritonType(T()))
-        do_test(builder, () -> BlockTritonType(PointerTritonType(T()), Int64[]))
-        do_test(builder, () -> BlockTritonType(PointerTritonType(T()), Int64[1, 2, 3]))
+        do_test(builder, () -> PointerTrTypeable(T()))
+        do_test(builder, () -> BlockTrTypeable(PointerTrTypeable(T()), Int64[]))
+        do_test(builder, () -> BlockTrTypeable(PointerTrTypeable(T()), Int64[1, 2, 3]))
         # @show T
         # @show repr(T) == "Tvoid", Base.repr(T)
-        T() == Tvoid || do_test(builder, () -> BlockTritonType(T(), Int64[1, 2, 3]))
+        T() == Tvoid || do_test(builder, () -> BlockTrTypeable(T(), Int64[1, 2, 3]))
     end
 end
 
     
-change_scalar_type(x::ScalarTritonType, y::ScalarTritonType) = y
-change_scalar_type(x::PointerTritonType, y::ScalarTritonType) = PointerTritonType(y)
-change_scalar_type(x::BlockTritonType, y::ScalarTritonType) = BlockTritonType(y, x.dims)
+change_scalar_type(x::ScalarTrTypeable, y::ScalarTrTypeable) = y
+change_scalar_type(x::PointerTrTypeable, y::ScalarTrTypeable) = PointerTrTypeable(y)
+change_scalar_type(x::BlockTrTypeable, y::ScalarTrTypeable) = BlockTrTypeable(y, x.dims)
 

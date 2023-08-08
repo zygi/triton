@@ -2,40 +2,31 @@ using ThreadsX
 using Evolutionary
 
 # Simple dumb optimization from a list of configurations
-optimize(fn, dynamic_argument_types, search_space, grid_map_fn) = begin
+optimize(fn, dynamic_argument_types, dynamic_argument_instances, search_space, grid_map_fn) = begin
     into_compiled(cfg) = try
-        compile_triton_kernel(fn, dynamic_argument_types, cfg.static_args, grid_map_fn; num_warps=cfg.num_warps, num_stages=cfg.num_stages)
+        compile_triton_kernel(fn, dynamic_argument_types, cfg, grid_map_fn)
     catch e
+        @info e
         nothing
     end
+    
+    # First compile all kernels concurrently
     kernels = ThreadsX.map(into_compiled, search_space) |> filter(!isnothing)
     
-    example_args = (
-        CUDA.rand(Float16, SZ, SZ),
-        CUDA.rand(Float16, SZ, SZ),
-        CUDA.zeros(Float16, SZ, SZ),
-        SZ, SZ, SZ, SZ, SZ, SZ   
-    )
-    
-
-    # @show "Constructing benchmarks"
     do_benchmark(fn, params...) = begin
         b = @benchmarkable begin CUDA.@sync $fn($(params)...) end seconds=0.3
         run(b)
     end 
-
-    # benchmarks = [begin @benchmarkable kern(example_args...) seconds=0.5 end for kern in kernels]
-    
-    @show "Constructing results"
-    results = [do_benchmark(kern, example_args...) for kern in kernels]
-
-    results
+    [do_benchmark(kern, dynamic_argument_instances...) for kern in kernels]
 end
 
 
 
 ## TODO document
-# Julia doesn't have much support for discrete-valued black box optimizers 
+# Julia doesn't have much support for discrete-valued black box optimizers, so we "invent" our own
+# We want to map our kernel params into an optimizable R^n box. Most of the params will be integers
+# (in which case we map by identity and unmap by rounding)
+# or powers-of-2 (in which case we map by log2 and unmap by 2^round)
 
 abstract type IntervalSearchSpace end
 struct LinearDiscreteSearchSpace{T} <: IntervalSearchSpace
@@ -61,7 +52,7 @@ projectsoln(space::Log2DiscreteSearchSpace, soln) = log2(soln)
 
 @test let sp = Log2DiscreteSearchSpace(Int32, 32, 256); transformsoln(sp, sp.lb) end == 32.0
 
-struct FullSearchSpace
+@kwdef struct FullSearchSpace
     num_warps
     num_stages
     static_args::OrderedDict{Symbol, <:IntervalSearchSpace}
@@ -91,7 +82,7 @@ end
 
 
 # TODO don't keep reusing dynamic args
-optimize_bbo(matmul_kernel, dynamic_argument_types, search_space::FullSearchSpace, dynamic_args, grid_map_fn; init_assignment=nothing) = begin
+optimize_bbo(matmul_kernel, dynamic_argument_types, search_space::FullSearchSpace, dynamic_args, grid_map_fn; init_assignment=nothing, iterations=nothing, kwargs...) = begin
     kernel_cache = Dict{ConfigParams, Any}()
 
     do_experiment(assignment) = begin
@@ -138,5 +129,6 @@ optimize_bbo(matmul_kernel, dynamic_argument_types, search_space::FullSearchSpac
     # bboptimize(do_experiment, init_point; SearchRange=collect(zip(optim_grid_lbs, optim_grid_ubs)), StartingMethod=:resampling_inheritance_memetic_search)#, init_point)
 
     # @show get_optim_grid(search_space)
-    Evolutionary.optimize(do_experiment, BoxConstraints(get_optim_grid(search_space)...), init_point, CMAES(μ=7))
+    opt_result = Evolutionary.optimize(do_experiment, BoxConstraints(get_optim_grid(search_space)...), init_point, CMAES(μ=3), Evolutionary.Options(; iterations, successive_f_tol=0, kwargs...))
+    reverse_point(Evolutionary.minimizer(opt_result), search_space), opt_result
 end
