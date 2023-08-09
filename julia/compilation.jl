@@ -97,7 +97,9 @@ end
 
 ttgir_to_llir!(mod, arch) = begin
     tmainfos = CT.StdVector{CT.TMAInfo}()   
-    CT.translate_triton_gpu_to_llvmir(mod, arch, tmainfos, false)
+    res = CT.translate_triton_gpu_to_llvmir(mod, arch, tmainfos, false)
+    # @show tmainfos
+    res
 end
 llir_to_ptx!(llir::AbstractString, arch) = CT.translate_llvmir_to_ptx(llir, arch, 81)
 
@@ -356,7 +358,7 @@ compile_function(
         # fn(builder, arg_tensors..., (Tensor(builder, a) for a in val_args)...)
 
         if print_initial_ttir
-            CT.repr(mod) |> print
+            CT.repr(fn_op) |> print
         end
 
         cufun, recommended_sm_size =

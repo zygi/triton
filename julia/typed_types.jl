@@ -1378,9 +1378,9 @@ _cpp_vec_of_refs(ls) = CT.StdVector([Base.unsafe_convert(CT.CxxRef{CT.Value}, CT
 
 function block_ptr(base::TrVal; parent_shape, parent_strides, offsets, block_shape, order)
     # TODO this is probably bad style bc it causes type instability. What's a more elegant way to write this?
-    parent_shape = cast.(collect(TrVal, parent_shape), Int32)
-    parent_strides = cast.(collect(TrVal, parent_strides), Int32)
-    offsets = cast.(collect(TrVal, offsets), Int64)
+    parent_shape = cast.(collect(TrVal, parent_shape), Int64)
+    parent_strides = cast.(collect(TrVal, parent_strides), Int64)
+    offsets = cast.(collect(TrVal, offsets), Int32) # Note that as of the time of writing Triton uses int32 for offsets
 
     @assert is_pointer(trtype(base)) "base must be a pointer, got $(trtype(base))"
     @assert !is_block(trtype(base)) "base must not be a block, got $(trtype(base))"
@@ -1435,7 +1435,7 @@ function advance(base::TrVal{<:TrBlockPtr}, offsets)
         CT.create_advance!(
             get_builder_ref(),
             base.handle,
-            _cpp_vec_of_refs(collect(TrVal, offsets)),
+            _cpp_vec_of_refs(cast.(collect(TrVal, offsets), Int32)),
         ),
     )
 end

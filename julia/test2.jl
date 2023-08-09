@@ -20,7 +20,7 @@ include("global_implicit.jl")
 # include("tensor_ops.jl")
 include("typed_types.jl")
 include("compilation.jl")
-include("ops.jl")
+include("big_ops.jl")
 include("autotune.jl")
 include("overrides/CUBLAS.jl")
 
@@ -163,6 +163,8 @@ tk = compile_triton_kernel(
     config_params,
     grid_map_fn;
     print_opt_ttir = true,
+    bypass_cache=true
+    # print_initial_ttir = true
 )
 
 triton_matmul!(out, a, b) = tk(
@@ -188,9 +190,6 @@ triton_matmul!(out, a, b) = tk(
     mul!(out_blas, a, b)
     @test out ≈ out_blas
 end
-
-
-
 
 # DATA_TYPE = Tfp16
 

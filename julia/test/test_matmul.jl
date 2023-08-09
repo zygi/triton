@@ -112,6 +112,7 @@ tk = compile_triton_kernel(
     config_params,
     grid_map_fn;
     print_opt_ttir = true,
+    bypass_cache=true
 )
 
 triton_matmul!(out, a, b) = tk(

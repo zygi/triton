@@ -683,7 +683,11 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
               [](mlir::ModuleOp &self) -> std::string {
                 std::string str;
                 llvm::raw_string_ostream os(str);
-                self.print(os);
+                auto printingFlags = mlir::OpPrintingFlags();
+                printingFlags.elideLargeElementsAttrs(16);
+                printingFlags.enableDebugInfo();
+
+                self.print(os, printingFlags);
                 return str;
               })
       .method("bytecode",
