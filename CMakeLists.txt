@@ -47,6 +47,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # Third-party
 include_directories(${PYBIND11_INCLUDE_DIR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -D__STDC_FORMAT_MACROS  -fPIC -std=gnu++17 -fvisibility=hidden -fvisibility-inlines-hidden")
 
@@ -204,18 +205,16 @@ set(TRITON_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 get_property(dialect_libs GLOBAL PROPERTY MLIR_DIALECT_LIBS)
 get_property(conversion_libs GLOBAL PROPERTY MLIR_CONVERSION_LIBS)
 
-if(TRITON_BUILD_PYTHON_MODULE)
-  add_library(triton SHARED ${PYTHON_SRC})
-  set(TRITON_LIBRARIES
-    TritonAnalysis
-    TritonTransforms
-    TritonGPUTransforms
-    TritonNvidiaGPUTransforms
-    TritonLLVMIR
-    TritonPTX
-    TritonHSACO
-    ${dialect_libs}
-    ${conversion_libs}
+set(TRITON_LIBRARIES
+  TritonAnalysis
+  TritonTransforms
+  TritonGPUTransforms
+  TritonNvidiaGPUTransforms
+  TritonLLVMIR
+  TritonPTX
+  TritonHSACO
+  ${dialect_libs}
+  ${conversion_libs}
 
   # optimizations
   MLIRBytecodeWriter

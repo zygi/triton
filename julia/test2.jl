@@ -147,7 +147,7 @@ matmul_kernel(; # note: all of these are kwargs
         order = (2, 1),
     )
 
-    store(c_block_ptr, cast(ccumulator, DATA_TYPE); boundary_check = (1, 2))
+    store!(c_block_ptr, cast(accumulator, DATA_TYPE); boundary_check = (1, 2))
 
     triton_return()
 end

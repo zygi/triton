@@ -98,7 +98,7 @@ matmul_kernel(; # note: all of these are kwargs
     c_ptrs =
         (c_ptr + stride_cm * expanddims(offs_cm, 2)) + stride_cn * expanddims(offs_cn, 1)
     c_mask = (expanddims(offs_cm, 2) < M) & (expanddims(offs_cn, 1) < N)
-    store(c_ptrs, cast(accumulator, DATA_TYPE); mask = c_mask)
+    store!(c_ptrs, cast(accumulator, DATA_TYPE); mask = c_mask)
 
     triton_return()
 end
@@ -138,3 +138,6 @@ triton_matmul!(out, a, b) = tk(
     @test out ≈ out_blas
 end 
 
+# using BenchmarkTools
+# SZ = 4096
+# @btime begin CUDA.@sync triton_matmul!(out, a, b) end setup=(a=CUDA.rand(Float16, SZ, SZ); b=CUDA.rand(Float16, SZ, SZ); out=CUDA.zeros(Float16,SZ, SZ))

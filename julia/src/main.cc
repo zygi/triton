@@ -3038,6 +3038,104 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
     return shared.getInt();
   });
 
+
+//   py::class_<mlir::triton::gpu::TMAInfo>(m, "TMAInfo")
+//       .def(py::init<>())
+//       .def_readwrite("tensorDataType",
+//                      &mlir::triton::gpu::TMAInfo::tensorDataType)
+//       .def_readwrite("tensorRank", &mlir::triton::gpu::TMAInfo::tensorRank)
+//       .def_readwrite("globalAddressArgIdx",
+//                      &mlir::triton::gpu::TMAInfo::globalAddressArgIdx)
+//       .def_readwrite("globalStridesArgIdx",
+//                      &mlir::triton::gpu::TMAInfo::globalStridesArgIdx)
+//       .def_readwrite("globalDimsArgIdx",
+//                      &mlir::triton::gpu::TMAInfo::globalDimsArgIdx)
+//       .def_readwrite("boxDims", &mlir::triton::gpu::TMAInfo::boxDims)
+//       .def_readwrite("elementStrides",
+//                      &mlir::triton::gpu::TMAInfo::elementStrides)
+//       .def_readwrite("interleave", &mlir::triton::gpu::TMAInfo::interleave)
+//       .def_readwrite("swizzle", &mlir::triton::gpu::TMAInfo::swizzle)
+//       .def_readwrite("l2Promotion", &mlir::triton::gpu::TMAInfo::l2Promotion)
+//       .def_readwrite("oobFill", &mlir::triton::gpu::TMAInfo::oobFill)
+//       .def_readwrite("TMADescArgIdx",
+//                      &mlir::triton::gpu::TMAInfo::TMADescArgIdx);
+  mod.add_type<mlir::triton::gpu::TMAInfo>("TMAInfo")
+        .method("get_tensor_data_type", [](mlir::triton::gpu::TMAInfo &self) {
+          return self.tensorDataType;
+        })
+        .method("set_tensor_data_type!", [](mlir::triton::gpu::TMAInfo &self, int type) {
+          self.tensorDataType = type;
+        })
+        .method("get_tensor_rank", [](mlir::triton::gpu::TMAInfo &self) {
+          return self.tensorRank;
+        })
+        .method("set_tensor_rank!", [](mlir::triton::gpu::TMAInfo &self, uint32_t rank) {
+          self.tensorRank = rank;
+        })
+        .method("get_global_address_arg_idx", [](mlir::triton::gpu::TMAInfo &self) {
+          return self.globalAddressArgIdx;
+        })
+        .method("set_global_address_arg_idx!", [](mlir::triton::gpu::TMAInfo &self, size_t idx) {
+          self.globalAddressArgIdx = idx;
+        })
+        .method("get_global_strides_arg_idx", [](mlir::triton::gpu::TMAInfo &self) {
+          return self.globalStridesArgIdx;
+        })
+        .method("set_global_strides_arg_idx!", [](mlir::triton::gpu::TMAInfo &self, std::vector<int32_t> idx) {
+          self.globalStridesArgIdx = idx;
+        })
+        .method("get_global_dims_arg_idx", [](mlir::triton::gpu::TMAInfo &self) {
+          return self.globalDimsArgIdx;
+        })
+        .method("set_global_dims_arg_idx!", [](mlir::triton::gpu::TMAInfo &self, std::vector<int32_t> idx) {
+          self.globalDimsArgIdx = idx;
+        })
+        .method("get_box_dims", [](mlir::triton::gpu::TMAInfo &self) {
+          return self.boxDims;
+        })
+        .method("set_box_dims!", [](mlir::triton::gpu::TMAInfo &self, std::vector<unsigned int> dims) {
+          self.boxDims = dims;
+        })
+        .method("get_element_strides", [](mlir::triton::gpu::TMAInfo &self) {
+          return self.elementStrides;
+        })
+        .method("set_element_strides!", [](mlir::triton::gpu::TMAInfo &self, std::vector<unsigned int> strides) {
+          self.elementStrides = strides;
+        })
+        .method("get_interleave", [](mlir::triton::gpu::TMAInfo &self) {
+          return self.interleave;
+        })
+        .method("set_interleave!", [](mlir::triton::gpu::TMAInfo &self, int interleave) {
+          self.interleave = interleave;
+        })
+        .method("get_swizzle", [](mlir::triton::gpu::TMAInfo &self) {
+          return self.swizzle;
+        })
+        .method("set_swizzle!", [](mlir::triton::gpu::TMAInfo &self, int swizzle) {
+          self.swizzle = swizzle;
+        })
+        .method("get_l2_promotion", [](mlir::triton::gpu::TMAInfo &self) {
+          return self.l2Promotion;
+        })
+        .method("set_l2_promotion!", [](mlir::triton::gpu::TMAInfo &self, int l2Promotion) {
+          self.l2Promotion = l2Promotion;
+        })
+        .method("get_oob_fill", [](mlir::triton::gpu::TMAInfo &self) {
+          return self.oobFill;
+        })
+        .method("set_oob_fill!", [](mlir::triton::gpu::TMAInfo &self, int oobFill) {
+          self.oobFill = oobFill;
+        })
+        .method("get_tma_desc_arg_idx", [](mlir::triton::gpu::TMAInfo &self) {
+          return self.TMADescArgIdx;
+        })
+        .method("set_tma_desc_arg_idx!", [](mlir::triton::gpu::TMAInfo &self, int idx) {
+          self.TMADescArgIdx = idx;
+        });
+
+
+
+
   // m.def(
   //     "translate_triton_gpu_to_llvmir",
   //     [](mlir::ModuleOp op, int computeCapability, bool isROCM) {
@@ -3056,18 +3154,19 @@ JLCXX_MODULE define_julia_module(jlcxx::Module &mod) {
   //     },
   //     ret::take_ownership);
   mod.method("translate_triton_gpu_to_llvmir",
-             [](mlir::ModuleOp op, int computeCapability, bool isROCM) {
-               llvm::LLVMContext llvmContext;
-               auto llvmModule = ::mlir::triton::translateTritonGPUToLLVMIR(
-                   &llvmContext, op, computeCapability, isROCM);
-               if (!llvmModule)
-                 llvm::report_fatal_error(
-                     "Failed to translate TritonGPU to LLVM IR.");
-               std::string str;
-               llvm::raw_string_ostream os(str);
-               llvmModule->print(os, nullptr);
-               os.flush();
-               return str;
+             [](mlir::ModuleOp op, int computeCapability,
+        std::vector<mlir::triton::gpu::TMAInfo> &tmaInfos, bool isROCM) {
+        llvm::LLVMContext llvmContext;
+        auto llvmModule = ::mlir::triton::translateTritonGPUToLLVMIR(
+            &llvmContext, op, computeCapability, tmaInfos, isROCM);
+        if (!llvmModule)
+          llvm::report_fatal_error("Failed to translate TritonGPU to LLVM IR.");
+
+        std::string str;
+        llvm::raw_string_ostream os(str);
+        llvmModule->print(os, nullptr);
+        os.flush();
+        return str;
              });
 
   // m.def(

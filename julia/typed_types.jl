@@ -1459,7 +1459,7 @@ _process_boundary_check(xs, len) = begin
     sort(bs) .- Int32(1)
 end
 
-function store(
+function store!(
     ptr::TrVal{TrBlockPtr{T, S}},
     val_p::IntoTrVal;
     boundary_check = 1:ndims(ptr),
@@ -1497,8 +1497,8 @@ end
         order=(2, 1),
     )
 
-    store(bptr, 3.0f0)
-    store(bptr, ones(TrVal{Float32}, 4, 4))
+    store!(bptr, 3.0f0)
+    store!(bptr, ones(TrVal{Float32}, 4, 4))
 end
 
 function load(

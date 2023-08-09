@@ -95,7 +95,10 @@ optimize_ttgir!(mod, ctx, num_stages, arch) = begin
     return mod
 end
 
-ttgir_to_llir!(mod, arch) = CT.translate_triton_gpu_to_llvmir(mod, arch, false)
+ttgir_to_llir!(mod, arch) = begin
+    tmainfos = CT.StdVector{CT.TMAInfo}()   
+    CT.translate_triton_gpu_to_llvmir(mod, arch, tmainfos, false)
+end
 llir_to_ptx!(llir::AbstractString, arch) = CT.translate_llvmir_to_ptx(llir, arch, 81)
 
 
